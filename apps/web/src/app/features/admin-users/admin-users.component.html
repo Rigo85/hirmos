@@ -1,0 +1,15 @@
+<main class="admin-page">
+  <header class="admin-header"><a class="brand" routerLink="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>Hirmos</span></a><a class="quiet-button" routerLink="/">← Volver al reproductor</a></header>
+  <section class="admin-content">
+    <p class="eyebrow">ADMINISTRACIÓN</p><h1>Invitar oyentes</h1><p class="muted">Cada persona tendrá una cuenta, cola y sesiones propias.</p>
+    <article class="source-card">
+      <div class="source-card__status"><span class="source-icon">＋</span><div><strong>Nueva invitación</strong><small>El enlace será válido durante 48 horas y solo podrá usarse una vez.</small></div></div>
+      <form class="source-form" [formGroup]="form" (ngSubmit)="submit()">
+        <label for="invite-email">Correo</label><input id="invite-email" type="email" formControlName="email" autocomplete="email">
+        <label for="invite-role">Rol</label><select id="invite-role" formControlName="role"><option value="user">Oyente</option><option value="admin">Administrador</option></select>
+        @if (message()) { <p [class]="message()!.kind === 'success' ? 'success-message' : 'form-error'" role="status">{{ message()!.text }}</p> }
+        <div class="form-actions"><button class="primary-button primary-button--compact" type="submit" [disabled]="submitting()">{{ submitting() ? 'Creando…' : 'Enviar invitación' }}</button></div>
+      </form>
+    </article>
+  </section>
+</main>

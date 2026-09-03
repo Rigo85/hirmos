@@ -1,0 +1,316 @@
+import { HttpClient } from '@angular/common/http';
+import { Injectable, inject, signal } from '@angular/core';
+import type {
+  ClientToServerEvents,
+  PlaybackCommandResult,
+  PlaybackSnapshot,
+  ServerToClientEvents,
+  Track,
+} from '@hirmos/contracts';
+import { io, type Socket } from 'socket.io-client';
+import { firstValueFrom } from 'rxjs';
+import { AudioPlayerService } from './audio-player.service';
+import { SessionStore } from './session.store';
+
+type ControlAction = 'play' | 'pause' | 'next' | 'previous' | 'seek';
+
+@Injectable({ providedIn: 'root' })
+export class PlaybackSyncService {
+  private readonly http = inject(HttpClient);
+  private readonly player = inject(AudioPlayerService);
+  private readonly sessionStore = inject(SessionStore);
+  private readonly deviceId = playerInstanceId(this.sessionStore.session()?.user.id);
+  private readonly tracks = new Map<string, Track>();
+  private readonly socket: Socket<ServerToClientEvents, ClientToServerEvents>;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private reconcileSequence = 0;
+
+  readonly snapshot = signal<PlaybackSnapshot | null>(null);
+  readonly connected = signal(false);
+  readonly error = signal<string | null>(null);
+  readonly queueTracks = signal<Record<string, Track>>({});
+
+  public constructor() {
+    this.socket = io({
+      path: '/socket.io',
+      autoConnect: false,
+      transports: ['websocket', 'polling'],
+      auth: {
+        deviceId: this.deviceId,
+        deviceName: deviceName(),
+        deviceType: deviceType(),
+      },
+    });
+    this.socket.on('connect', () => {
+      this.connected.set(true);
+      this.error.set(null);
+      this.socket.emit('playback:sync', { lastRevision: this.snapshot()?.revision ?? null });
+    });
+    this.socket.on('disconnect', () => {
+      this.connected.set(false);
+      this.player.pause();
+    });
+    this.socket.on('connect_error', (error) => {
+      this.error.set(error.message === 'Authentication required'
+        ? 'Tu sesión terminó. Inicia sesión nuevamente.'
+        : 'No pudimos conectar tus dispositivos.');
+    });
+    this.socket.on('playback:error', (error) => this.error.set(error.message));
+    this.socket.on('playback:snapshot', (snapshot) => this.receive(snapshot));
+    this.player.onEnded(() => {
+      if (this.ownsLease()) void this.control('next', undefined, 'ended');
+    });
+    this.registerMediaSession();
+    this.connect();
+  }
+
+  public connect(): void {
+    if (!this.socket.connected) this.socket.connect();
+    if (!this.heartbeat) {
+      this.heartbeat = setInterval(() => void this.publishState(), 10_000);
+    }
+  }
+
+  public async select(track: Track): Promise<void> {
+    this.remember(track);
+    const snapshot = this.snapshot();
+    if (!snapshot || !this.socket.connected) {
+      this.error.set('El hilo todavía se está conectando. Inténtalo de nuevo.');
+      return;
+    }
+    await this.issue((revision, ack) => this.socket.emit('playback:select', {
+      commandId: crypto.randomUUID(),
+      expectedRevision: revision,
+      trackRef: track.id,
+    }, ack));
+  }
+
+  public async selectContext(
+    tracks: Track[],
+    selectedIndex: number,
+    contextType: 'album' | 'artist' | 'search' | 'home',
+    contextRef: string | null,
+  ): Promise<void> {
+    if (!tracks.length || selectedIndex < 0 || selectedIndex >= tracks.length) return;
+    tracks.forEach((track) => this.remember(track));
+    if (!this.snapshot() || !this.socket.connected) {
+      this.error.set('El hilo todavía se está conectando. Inténtalo de nuevo.');
+      return;
+    }
+    await this.issue((revision, ack) => this.socket.emit('playback:select-context', {
+      commandId: crypto.randomUUID(), expectedRevision: revision,
+      trackRefs: tracks.map((track) => track.id), selectedIndex, contextType, contextRef,
+    }, ack));
+  }
+
+  public async claimHere(): Promise<void> {
+    const snapshot = this.snapshot();
+    if (!snapshot) return;
+    await this.issue((revision, ack) => this.socket.emit('playback:claim', {
+      commandId: crypto.randomUUID(),
+      expectedRevision: revision,
+    }, ack));
+  }
+
+  public async toggle(): Promise<void> {
+    const snapshot = this.snapshot();
+    if (!snapshot?.currentTrackRef) return;
+    await this.control(snapshot.status === 'playing' ? 'pause' : 'play');
+  }
+
+  public next(): Promise<void> {
+    return this.control('next');
+  }
+
+  public previous(): Promise<void> {
+    return this.control('previous');
+  }
+
+  public seek(seconds: number): Promise<void> {
+    return this.control('seek', Math.max(0, Math.round(seconds * 1_000)));
+  }
+
+  public async removeQueueItem(queueItemId: string): Promise<void> {
+    const snapshot = this.snapshot();
+    if (!snapshot) return;
+    await this.issue((revision, ack) => this.socket.emit('playback:queue-remove', {
+      commandId: crypto.randomUUID(),
+      expectedRevision: revision,
+      queueItemId,
+    }, ack));
+  }
+
+  public trackFor(reference: string): Track | null {
+    return this.queueTracks()[reference] ?? this.tracks.get(reference) ?? null;
+  }
+
+  public disconnect(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = null;
+    this.socket.disconnect();
+    this.snapshot.set(null);
+    this.player.pause();
+  }
+
+  public ownsLease(snapshot = this.snapshot()): boolean {
+    if (!snapshot?.leaseExpiresAt) return false;
+    return snapshot.activeDeviceId === this.deviceId
+      && Date.parse(snapshot.leaseExpiresAt) > Date.now();
+  }
+
+  public hasActiveRemotePlayer(snapshot = this.snapshot()): boolean {
+    if (!snapshot?.activeDeviceId || !snapshot.leaseExpiresAt) return false;
+    return snapshot.activeDeviceId !== this.deviceId
+      && Date.parse(snapshot.leaseExpiresAt) > Date.now();
+  }
+
+  private receive(snapshot: PlaybackSnapshot): void {
+    this.snapshot.set(snapshot);
+    void this.loadQueueTracks(snapshot);
+    void this.reconcile(snapshot, ++this.reconcileSequence);
+  }
+
+  private async reconcile(snapshot: PlaybackSnapshot, sequence: number): Promise<void> {
+    if (!this.ownsLease(snapshot)) {
+      this.player.pause();
+      return;
+    }
+    if (!snapshot.currentTrackRef) {
+      this.player.pause();
+      return;
+    }
+    const track = await this.loadTrack(snapshot.currentTrackRef);
+    if (!track || sequence !== this.reconcileSequence) return;
+    if (this.player.track()?.id !== track.id) this.player.load(track);
+    const expectedSeconds = estimatedPositionSeconds(snapshot);
+    if (Math.abs(this.player.positionSeconds() - expectedSeconds) > 2) {
+      this.player.seek(expectedSeconds);
+    }
+    if (snapshot.status === 'playing' && !this.player.playing()) {
+      await this.player.resume();
+    } else if (snapshot.status !== 'playing' && this.player.playing()) {
+      this.player.pause();
+    }
+  }
+
+  private async control(
+    action: ControlAction,
+    positionMs?: number,
+    reason: 'user' | 'ended' = 'user',
+  ): Promise<void> {
+    const snapshot = this.snapshot();
+    if (!snapshot || !this.socket.connected) return;
+    await this.issue((revision, ack) => this.socket.emit('playback:control', {
+      commandId: crypto.randomUUID(),
+      expectedRevision: revision,
+      action,
+      reason,
+      ...(positionMs === undefined ? {} : { positionMs }),
+    }, ack));
+  }
+
+  private async publishState(): Promise<void> {
+    const snapshot = this.snapshot();
+    if (!snapshot || !this.ownsLease(snapshot) || !this.socket.connected) return;
+    await this.sendCommand((ack) => this.socket.emit('playback:update', {
+      commandId: crypto.randomUUID(),
+      expectedRevision: snapshot.revision,
+      leaseEpoch: snapshot.leaseEpoch,
+      status: this.player.playing() ? 'playing' : 'paused',
+      positionMs: Math.max(0, Math.round(this.player.positionSeconds() * 1_000)),
+    }, ack));
+  }
+
+  private async issue(
+    emit: (revision: number, ack: (result: PlaybackCommandResult) => void) => void,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const revision = this.snapshot()?.revision;
+      if (revision === undefined) return;
+      const result = await this.sendCommand((ack) => emit(revision, ack));
+      if (!result) return;
+      if (result.status !== 'conflict') return;
+    }
+    this.error.set('El hilo siguió cambiando en otro dispositivo. Inténtalo nuevamente.');
+  }
+
+  private async sendCommand(
+    emit: (ack: (result: PlaybackCommandResult) => void) => void,
+  ): Promise<PlaybackCommandResult | null> {
+    const result = await new Promise<PlaybackCommandResult | null>((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 6_000);
+      emit((value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      });
+    });
+    if (!result) {
+      this.error.set('El servidor no confirmó el comando.');
+      return null;
+    }
+    this.receive(result.snapshot);
+    if (result.status !== 'conflict') this.error.set(null);
+    return result;
+  }
+
+  private async loadQueueTracks(snapshot: PlaybackSnapshot): Promise<void> {
+    await Promise.all(snapshot.queue.map((item) => this.loadTrack(item.trackRef)));
+    this.queueTracks.set(Object.fromEntries(this.tracks));
+  }
+
+  private async loadTrack(reference: string): Promise<Track | null> {
+    const known = this.tracks.get(reference);
+    if (known) return known;
+    try {
+      const track = await firstValueFrom(
+        this.http.get<Track>(`/api/music/tracks/${encodeURIComponent(reference)}`),
+      );
+      this.remember(track);
+      return track;
+    } catch {
+      this.error.set('No pudimos recuperar una canción de la cola.');
+      return null;
+    }
+  }
+
+  private remember(track: Track): void {
+    this.tracks.set(track.id, track);
+    this.queueTracks.set({ ...this.queueTracks(), [track.id]: track });
+  }
+
+  private registerMediaSession(): void {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.setActionHandler('play', () => void this.control('play'));
+    navigator.mediaSession.setActionHandler('pause', () => void this.control('pause'));
+    navigator.mediaSession.setActionHandler('nexttrack', () => void this.control('next'));
+    navigator.mediaSession.setActionHandler('previoustrack', () => void this.control('previous'));
+    navigator.mediaSession.setActionHandler('seekto', (details) => {
+      if (typeof details.seekTime === 'number') void this.seek(details.seekTime);
+    });
+  }
+}
+
+function playerInstanceId(userId: string | undefined): string {
+  const key = `hirmos.player-id:${userId ?? 'anonymous'}`;
+  const existing = sessionStorage.getItem(key);
+  if (existing && /^[0-9a-f-]{36}$/i.test(existing)) return existing;
+  const created = crypto.randomUUID();
+  sessionStorage.setItem(key, created);
+  return created;
+}
+
+function deviceName(): string {
+  return deviceType() === 'mobile' ? 'Teléfono' : 'Navegador de escritorio';
+}
+
+function deviceType(): 'desktop' | 'mobile' | 'tablet' {
+  if (matchMedia('(max-width: 760px)').matches) return 'mobile';
+  if (matchMedia('(max-width: 1050px)').matches) return 'tablet';
+  return 'desktop';
+}
+
+function estimatedPositionSeconds(snapshot: PlaybackSnapshot): number {
+  const anchor = snapshot.positionMs / 1_000;
+  if (snapshot.status !== 'playing') return anchor;
+  return anchor + Math.max(0, Date.now() - Date.parse(snapshot.positionObservedAt)) / 1_000;
+}

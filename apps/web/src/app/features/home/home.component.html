@@ -1,0 +1,25 @@
+<div class="content-frame home-page">
+  <section class="welcome-row"><div><p class="eyebrow">TU MÚSICA, SIN PERDER EL HILO</p><h1>Hola, {{ sessionStore.session()?.user?.displayName?.split(' ')?.[0] || 'oyente' }}.</h1><p class="muted">Retoma lo tuyo o descubre algo distinto.</p></div></section>
+
+  @if (currentTrack()) {
+    <section class="now-card">
+      <div class="cover cover--hero">@if (currentTrack()!.coverUrl) { <img [src]="currentTrack()!.coverUrl" [alt]="'Carátula de ' + currentTrack()!.album"> } @else { <span>{{ currentTrack()!.title.slice(0, 2).toUpperCase() }}</span><i></i> }</div>
+      <div class="now-card__copy"><p class="eyebrow">CONTINÚA DONDE ESTABAS</p><h2>{{ currentTrack()!.title }}</h2><p>{{ currentTrack()!.artist }} · {{ currentTrack()!.album }}</p><div class="now-card__actions"><button class="round-play" type="button" (click)="playback.toggle()" [attr.aria-label]="playback.snapshot()?.status === 'playing' ? 'Pausar' : 'Reproducir'"><app-icon [name]="playback.snapshot()?.status === 'playing' ? 'pause' : 'play'" /></button>@if (playback.hasActiveRemotePlayer()) { <button class="outline-button" type="button" (click)="playback.claimHere()">Reproducir aquí</button> }</div></div>
+      <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </section>
+  }
+
+  @if (error()) { <p class="form-error" role="alert">{{ error() }}</p> }
+  @if (loading()) { <div class="page-loading"><span></span><p>Cargando tu biblioteca…</p></div> }
+
+  @if (data(); as home) {
+    @if (home.recentlyPlayed.length) {
+      <section class="music-section"><div class="section-heading"><div><p class="eyebrow">TU ACTIVIDAD</p><h2>Escuchado recientemente</h2></div></div><ol class="track-results track-results--cards">@for (track of home.recentlyPlayed; track track.id) { <li><button type="button" (click)="play(track)">@if (track.coverUrl) { <img class="mini-cover" [src]="track.coverUrl" alt=""> } @else { <span class="mini-cover">♫</span> }<span><strong>{{ track.title }}</strong><small>{{ track.artist }} · {{ track.album }}</small></span><time>{{ track.durationMs / 60000 | number:'1.0-0' }} min</time></button></li> }</ol></section>
+    }
+    @if (home.mostPlayed.length) {
+      <section class="music-section"><div class="section-heading"><div><p class="eyebrow">TUS HÁBITOS</p><h2>Lo que más escuchas</h2></div></div><ol class="track-results track-results--cards">@for (track of home.mostPlayed; track track.id) { <li><button type="button" (click)="play(track)">@if (track.coverUrl) { <img class="mini-cover" [src]="track.coverUrl" alt=""> } @else { <span class="mini-cover">♫</span> }<span><strong>{{ track.title }}</strong><small>{{ track.artist }} · {{ track.album }}</small></span></button></li> }</ol></section>
+    }
+    <section class="music-section"><div class="section-heading"><div><p class="eyebrow">RECIÉN LLEGADOS</p><h2>Añadido recientemente</h2></div><a routerLink="/library">Ver biblioteca</a></div><div class="album-grid album-grid--five">@for (album of home.recentlyAdded; track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img loading="lazy" decoding="async" [src]="album.coverUrl" [alt]="'Carátula de ' + album.name"> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small><em>{{ album.year || '—' }} · {{ album.songCount }} canciones</em></a> }</div></section>
+    <section class="music-section"><div class="section-heading"><div><p class="eyebrow">OTRA VUELTA</p><h2>Redescubre tu biblioteca</h2></div></div><div class="album-grid album-grid--five">@for (album of home.rediscover; track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img loading="lazy" decoding="async" [src]="album.coverUrl" [alt]="'Carátula de ' + album.name"> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small></a> }</div></section>
+  }
+</div>

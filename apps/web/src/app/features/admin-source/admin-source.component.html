@@ -1,0 +1,23 @@
+<main class="admin-page">
+  <header class="admin-header">
+    <a class="brand" routerLink="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>Hirmos</span></a>
+    <a class="quiet-button" routerLink="/">← Volver al reproductor</a>
+  </header>
+  <section class="admin-content">
+    <p class="eyebrow">ADMINISTRACIÓN</p>
+    <h1>Fuente musical</h1>
+    <p class="muted">Conecta la biblioteca que Hirmos presentará a todos los oyentes.</p>
+
+    <article class="source-card">
+      <div class="source-card__status"><span class="source-icon">♫</span><div><strong>{{ source() ? source()!.name : 'Sin fuente configurada' }}</strong><small>{{ source() ? source()!.baseUrl : 'Agrega un servidor compatible con OpenSubsonic.' }}</small></div><span class="status-badge">{{ source()?.healthy ? 'Conectada' : 'Pendiente' }}</span></div>
+      <form class="source-form" [formGroup]="form" (ngSubmit)="save()">
+        <label for="source-name">Nombre interno</label><input id="source-name" formControlName="name">
+        <label for="source-url">URL del servidor</label><input id="source-url" type="url" formControlName="baseUrl" placeholder="https://musica.ejemplo.org">
+        <div class="form-columns"><div><label for="source-user">Usuario de servicio</label><input id="source-user" formControlName="username" autocomplete="off"></div><div><label for="source-password">Contraseña</label><input id="source-password" type="password" formControlName="password" autocomplete="new-password"></div></div>
+        <p class="security-note">La credencial se cifra en el servidor. Nunca se envía a los navegadores de los oyentes.</p>
+        @if (message()) { <p [class]="message()!.kind === 'success' ? 'success-message' : 'form-error'" role="status">{{ message()!.text }}</p> }
+        <div class="form-actions"><button class="outline-button" type="button" (click)="probe()" [disabled]="working()">{{ working() === 'probe' ? 'Probando…' : 'Probar conexión' }}</button><button class="primary-button primary-button--compact" type="submit" [disabled]="working()">{{ working() === 'save' ? 'Guardando…' : 'Guardar fuente' }}</button></div>
+      </form>
+    </article>
+  </section>
+</main>

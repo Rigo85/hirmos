@@ -1,0 +1,28 @@
+<main class="auth-page">
+  <section class="auth-story auth-story--compact" aria-labelledby="invitation-story">
+    <a class="brand brand--large" routerLink="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>Hirmos</span></a>
+    <div class="auth-story__copy"><p class="eyebrow">TU MÚSICA TE ESPERA</p><h1 id="invitation-story">Entra al<br><em>mismo hilo.</em></h1><p>Una cuenta propia, una cola continua y todos tus dispositivos conectados.</p></div>
+  </section>
+  <section class="auth-panel" aria-labelledby="invitation-heading">
+    <div class="auth-card">
+      @if (completed()) {
+        <p class="eyebrow">CUENTA CREADA</p><h2 id="invitation-heading">Ya eres parte</h2>
+        <p class="success-message">Tu invitación fue aceptada. Ya puedes iniciar sesión.</p>
+        <a class="primary-button button-link" routerLink="/login">Entrar a Hirmos</a>
+      } @else {
+        <p class="eyebrow">ACEPTAR INVITACIÓN</p><h2 id="invitation-heading">Crea tu cuenta</h2>
+        <p class="muted">Elige cómo te veremos y una contraseña de al menos 12 caracteres.</p>
+        <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+          <label for="display-name">Tu nombre</label><input id="display-name" formControlName="displayName" autocomplete="name" [attr.aria-invalid]="form.controls.displayName.touched && form.controls.displayName.invalid">
+          @if (form.controls.displayName.touched && form.controls.displayName.invalid) { <p class="field-error" role="alert">Escribe un nombre de hasta 100 caracteres.</p> }
+          <label for="new-password">Contraseña</label><input id="new-password" type="password" formControlName="password" autocomplete="new-password" [attr.aria-invalid]="form.controls.password.touched && form.controls.password.invalid">
+          @if (form.controls.password.touched && form.controls.password.invalid) { <p class="field-error" role="alert">Debe tener al menos 12 caracteres.</p> }
+          <label for="confirm-password">Repite la contraseña</label><input id="confirm-password" type="password" formControlName="confirmPassword" autocomplete="new-password" [attr.aria-invalid]="form.controls.confirmPassword.touched && form.controls.confirmPassword.invalid">
+          @if (form.controls.confirmPassword.touched && form.controls.confirmPassword.invalid) { <p class="field-error" role="alert">Repite la contraseña.</p> }
+          @if (errorMessage()) { <p class="form-error" role="alert">{{ errorMessage() }}</p> }
+          <button class="primary-button" type="submit" [disabled]="submitting() || !token">{{ submitting() ? 'Creando…' : 'Crear mi cuenta' }}</button>
+        </form>
+      }
+    </div>
+  </section>
+</main>

@@ -1,0 +1,39 @@
+# Local secrets
+.app-password
+.navidrome-credenciales
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.credentials
+credentials.*
+.secrets/
+secrets/
+
+# Private workspace material must not enter the public repository
+AGENTS.md
+.agents/
+.codex/
+docs/
+
+# Dependencies and builds
+node_modules/
+dist/
+.angular/
+coverage/
+test-results/
+playwright-report/
+
+# Runtime
+*.log
+*.pid
+.pm2/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,19 @@
+<div class="content-frame library-page">
+  <header class="page-heading"><p class="eyebrow">TU COLECCIÓN</p><h1>Tu biblioteca</h1><p class="muted">Todo tu catálogo, organizado para encontrar música sin depender del azar.</p></header>
+  <nav class="library-tabs" aria-label="Secciones de la biblioteca">
+    <button type="button" [class.active]="view() === 'albums'" (click)="select('albums')">Álbumes <span>{{ albums().length }}</span></button>
+    <button type="button" [class.active]="view() === 'artists'" (click)="select('artists')">Artistas <span>{{ artists().length }}</span></button>
+    <button type="button" [class.active]="view() === 'tracks'" (click)="select('tracks')">Canciones <span>{{ tracks().length }}</span></button>
+    <button type="button" [class.active]="view() === 'genres'" (click)="select('genres')">Géneros <span>{{ genres().length }}</span></button>
+  </nav>
+  @if (loading()) { <div class="page-loading"><span></span><p>Ordenando la biblioteca…</p></div> }
+  @if (error()) { <p class="form-error" role="alert">{{ error() }}</p> }
+  @if (!loading() && !error()) {
+    @switch (view()) {
+      @case ('albums') { <div class="album-grid album-grid--five">@for (album of albums(); track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img loading="lazy" decoding="async" [src]="album.coverUrl" [alt]="'Carátula de ' + album.name"> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small><em>{{ album.year || '—' }} · {{ album.songCount }} canciones</em></a> }</div> }
+      @case ('artists') { <div class="artist-grid">@for (artist of artists(); track artist.id) { <a class="artist-card" [routerLink]="['/artists', artist.id]">@if (artist.coverUrl) { <img loading="lazy" decoding="async" [src]="artist.coverUrl" [alt]="artist.name"> } @else { <span>{{ artist.name.slice(0, 2).toUpperCase() }}</span> }<strong>{{ artist.name }}</strong><small>{{ artist.albumCount }} álbumes</small></a> }</div> }
+      @case ('tracks') { <ol class="track-results">@for (track of tracks(); track track.id) { <li><button type="button" (click)="play(track)">@if (track.coverUrl) { <img class="mini-cover" [src]="track.coverUrl" alt=""> } @else { <span class="mini-cover">♫</span> }<span><strong>{{ track.title }}</strong><small>{{ track.artist }} · {{ track.album }}</small></span><time>{{ track.durationMs / 60000 | number:'1.0-0' }} min</time></button></li> }</ol> }
+      @case ('genres') { <div class="genre-grid">@for (genre of genres(); track genre.name) { <article class="genre-card"><span>♫</span><strong>{{ genre.name }}</strong><small>{{ genre.albumCount }} álbumes · {{ genre.songCount }} canciones</small></article> }</div> }
+    }
+  }
+</div>

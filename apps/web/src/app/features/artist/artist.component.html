@@ -1,0 +1,21 @@
+<div class="content-frame detail-page">
+  @if (error()) { <p class="form-error" role="alert">{{ error() }}</p> }
+  @if (!artist() && !error()) { <div class="page-loading"><span></span><p>Cargando artista…</p></div> }
+  @if (artist(); as item) {
+    <header class="artist-hero">@if (item.coverUrl) { <img [src]="item.coverUrl" [alt]="item.name"> } @else { <span>{{ item.name.slice(0, 2).toUpperCase() }}</span> }<div><p class="eyebrow">ARTISTA</p><h1>{{ item.name }}</h1><p class="muted">{{ item.albums.length }} álbumes · {{ songCount() }} canciones</p></div></header>
+    @if (item.topTracks.length || item.biography) {
+      <section class="artist-overview" [class.artist-overview--single]="!item.topTracks.length || !item.biography">
+        @if (item.topTracks.length) {
+          <div class="artist-popular"><div class="section-heading"><h2>Canciones populares</h2></div><ol class="track-results artist-top-tracks">@for (track of item.topTracks.slice(0, 5); track track.id; let index = $index) { <li><button type="button" (click)="play(track)" [attr.aria-label]="'Reproducir ' + track.title"><span class="track-leading"><span>{{ index + 1 }}</span><app-icon name="play" /></span><span><strong>{{ track.title }}</strong><small>{{ track.album }}</small></span><time>{{ track.durationMs / 60000 | number:'1.0-0' }} min</time></button></li> }</ol></div>
+        }
+        @if (item.biography) {
+          <aside class="artist-biography"><p class="eyebrow">ACERCA DE</p><h2>{{ item.name }}</h2><p>{{ item.biography }}</p>@if (item.externalUrl) { <a [href]="item.externalUrl" target="_blank" rel="noopener noreferrer">Más información en Last.fm <span aria-hidden="true">↗</span></a> }</aside>
+        }
+      </section>
+    }
+    <section class="music-section"><div class="section-heading"><h2>Discografía</h2></div><div class="album-grid album-grid--five">@for (album of item.albums; track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img loading="lazy" decoding="async" [src]="album.coverUrl" alt=""> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.year || 'Año desconocido' }}</small></a> }</div></section>
+    @if (item.similarArtists.length) {
+      <section class="music-section"><div class="section-heading"><div><p class="eyebrow">PARA SEGUIR EXPLORANDO</p><h2>Artistas relacionados</h2></div></div><div class="artist-grid artist-grid--related">@for (related of item.similarArtists; track related.id) { <a class="artist-card" [routerLink]="['/artists', related.id]">@if (related.coverUrl) { <img loading="lazy" decoding="async" [src]="related.coverUrl" [alt]="related.name"> } @else { <span>{{ related.name.slice(0, 2).toUpperCase() }}</span> }<strong>{{ related.name }}</strong></a> }</div></section>
+    }
+  }
+</div>

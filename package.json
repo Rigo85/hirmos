@@ -1,0 +1,36 @@
+{
+  "name": "hirmos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @hirmos/contracts && npm run build -w @hirmos/domain && npm run build -w @hirmos/api && npm run build -w @hirmos/web",
+    "build:api": "npm run build -w @hirmos/contracts && npm run build -w @hirmos/domain && npm run build -w @hirmos/api",
+    "build:web": "npm run build -w @hirmos/contracts && npm run build -w @hirmos/web",
+    "dev:api": "npm run build -w @hirmos/contracts && npm run build -w @hirmos/domain && npm run dev -w @hirmos/api",
+    "dev:web": "npm run build -w @hirmos/contracts && npm run start -w @hirmos/web",
+    "test": "npm run test --workspaces --if-present",
+    "test:e2e": "npm run e2e -w @hirmos/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:migrate": "npm run db:migrate -w @hirmos/api",
+    "auth:bootstrap-admin": "npm run auth:bootstrap-admin -w @hirmos/api",
+    "source:configure": "node scripts/configure-source.mjs",
+    "smoke:auth": "node scripts/smoke-auth-flow.mjs",
+    "smoke:playback": "node scripts/smoke-playback.mjs"
+  },
+  "allowScripts": {
+    "@parcel/watcher@2.6.0": true,
+    "argon2@0.45.1": true,
+    "esbuild@0.28.2": true,
+    "lmdb@3.5.6": true,
+    "msgpackr-extract@3.0.4": true
+  }
+}
