@@ -7,6 +7,10 @@ Mantiene una cola y una sesión de reproducción por usuario para que otro
 navegador pueda controlar el dispositivo activo o continuar la música mediante
 **Reproducir aquí**.
 
+La instancia en producción está disponible en
+[hirmos.rji-services.org](https://hirmos.rji-services.org). El acceso requiere
+una invitación.
+
 ## Funciones actuales
 
 - Interfaz Angular responsive con biblioteca, búsqueda y detalles de artistas y
