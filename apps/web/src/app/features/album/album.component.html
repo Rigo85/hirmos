@@ -3,6 +3,6 @@
   @if (!album() && !error()) { <div class="page-loading"><span></span><p>Cargando álbum…</p></div> }
   @if (album(); as item) {
     <header class="detail-hero"><div class="cover detail-cover">@if (item.coverUrl) { <img [src]="item.coverUrl" [alt]="'Carátula de ' + item.name"> } @else { <span>{{ item.name.slice(0, 2).toUpperCase() }}</span> }</div><div><p class="eyebrow">ÁLBUM</p><h1>{{ item.name }}</h1>@if (item.artistId) { <a [routerLink]="['/artists', item.artistId]">{{ item.artist }}</a> } @else { <p>{{ item.artist }}</p> }<p class="muted">{{ item.year || 'Año desconocido' }} · {{ item.songCount }} canciones @if (item.genre) { · {{ item.genre }} }</p>@if (item.tracks.length) { <button class="primary-button primary-button--compact play-album-button" type="button" (click)="play(item.tracks[0])"><app-icon name="play" /> Reproducir álbum</button> }</div></header>
-    <ol class="track-results detail-tracks">@for (track of item.tracks; track track.id; let index = $index) { <li><button type="button" (click)="play(track)" [attr.aria-label]="'Reproducir ' + track.title"><span class="track-leading"><span>{{ index + 1 }}</span><app-icon name="play" /></span><span><strong>{{ track.title }}</strong><small>{{ track.artist }}</small></span><time>{{ track.durationMs / 60000 | number:'1.0-0' }} min</time></button></li> }</ol>
+    <ol class="track-results detail-tracks">@for (track of item.tracks; track track.id; let index = $index) { <li appTrackRow [track]="track" [position]="index + 1" (playTrack)="play(track)"></li> }</ol>
   }
 </div>

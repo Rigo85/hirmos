@@ -339,12 +339,13 @@ export class PlaybackRepository {
       : input.action === 'pause' ? 'paused' : null;
     const result = await this.db.query(
       `WITH candidate AS (
-         SELECT s.id
+         SELECT s.id, s.active_device_id, s.lease_expires_at
           FROM playback_sessions s
+          JOIN devices d ON d.id = $2 AND d.user_id = $1 AND d.revoked_at IS NULL
           WHERE s.user_id = $1 AND s.revision = $4
             AND s.current_queue_item_id IS NOT NULL
-            AND s.active_device_id IS NOT NULL
-            AND s.lease_expires_at > now()
+            AND ($5 = 'play' OR
+                 (s.active_device_id IS NOT NULL AND s.lease_expires_at > now()))
           FOR UPDATE OF s
        ), accepted AS (
          INSERT INTO playback_events
@@ -359,10 +360,27 @@ export class PlaybackRepository {
          UPDATE playback_sessions s
             SET status = COALESCE($7, s.status),
                 position_ms = CASE WHEN $5 = 'seek' THEN $6 ELSE s.position_ms END,
-                position_observed_at = now(), revision = revision + 1,
+                position_observed_at = now(),
+                active_device_id = CASE
+                  WHEN $5 = 'play' AND
+                       (candidate.active_device_id IS NULL OR
+                        candidate.lease_expires_at <= now()) THEN $2
+                  ELSE s.active_device_id END,
+                lease_epoch = CASE
+                  WHEN $5 = 'play' AND
+                       (candidate.active_device_id IS NULL OR
+                        candidate.lease_expires_at <= now()) THEN s.lease_epoch + 1
+                  ELSE s.lease_epoch END,
+                lease_expires_at = CASE
+                  WHEN $5 = 'play' AND
+                       (candidate.active_device_id IS NULL OR
+                        candidate.lease_expires_at <= now())
+                    THEN now() + interval '${LEASE_SECONDS} seconds'
+                  ELSE s.lease_expires_at END,
+                revision = revision + 1,
                 updated_at = now()
-           FROM accepted
-          WHERE s.id = accepted.playback_session_id
+           FROM accepted, candidate
+          WHERE s.id = accepted.playback_session_id AND s.id = candidate.id
          RETURNING s.*
        )
        INSERT INTO playback_checkpoints

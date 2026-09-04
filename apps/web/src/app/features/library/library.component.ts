@@ -1,5 +1,4 @@
 import { HttpClient } from '@angular/common/http';
-import { DecimalPipe } from '@angular/common';
 import { Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import type {
@@ -8,10 +7,11 @@ import type {
 } from '@hirmos/contracts';
 import { firstValueFrom } from 'rxjs';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
+import { TrackRowComponent } from '../../shared/track-row.component';
 
 type LibraryView = 'albums' | 'artists' | 'tracks' | 'genres';
 
-@Component({ selector: 'app-library', imports: [RouterLink, DecimalPipe], templateUrl: './library.component.html' })
+@Component({ selector: 'app-library', imports: [RouterLink, TrackRowComponent], templateUrl: './library.component.html' })
 export class LibraryComponent {
   private readonly http = inject(HttpClient);
   protected readonly playback = inject(PlaybackSyncService);

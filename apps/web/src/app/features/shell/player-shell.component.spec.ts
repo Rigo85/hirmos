@@ -26,6 +26,7 @@ describe('PlayerShellComponent', () => {
           provide: AudioPlayerService,
           useValue: {
             track: signal(null), positionSeconds: signal(0), volume: signal(1),
+            phase: signal('paused'),
             setVolume: vi.fn(),
           },
         },

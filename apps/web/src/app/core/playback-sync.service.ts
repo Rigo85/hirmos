@@ -22,6 +22,7 @@ export class PlaybackSyncService {
   private readonly deviceId = playerInstanceId(this.sessionStore.session()?.user.id);
   private readonly tracks = new Map<string, Track>();
   private readonly socket: Socket<ServerToClientEvents, ClientToServerEvents>;
+  private readonly trackLoads = new Map<string, Promise<Track | null>>();
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private reconcileSequence = 0;
 
@@ -59,6 +60,13 @@ export class PlaybackSyncService {
     this.socket.on('playback:snapshot', (snapshot) => this.receive(snapshot));
     this.player.onEnded(() => {
       if (this.ownsLease()) void this.control('next', undefined, 'ended');
+    });
+    this.player.onPlaybackStarted(() => void this.publishState());
+    this.player.onPlaybackFailed((message) => {
+      this.error.set(message);
+      void this.publishState().finally(() => {
+        if (this.player.phase() === 'error') this.error.set(message);
+      });
     });
     this.registerMediaSession();
     this.connect();
@@ -166,8 +174,8 @@ export class PlaybackSyncService {
 
   private receive(snapshot: PlaybackSnapshot): void {
     this.snapshot.set(snapshot);
-    void this.loadQueueTracks(snapshot);
     void this.reconcile(snapshot, ++this.reconcileSequence);
+    void this.loadQueueTracks(snapshot);
   }
 
   private async reconcile(snapshot: PlaybackSnapshot, sequence: number): Promise<void> {
@@ -181,14 +189,18 @@ export class PlaybackSyncService {
     }
     const track = await this.loadTrack(snapshot.currentTrackRef);
     if (!track || sequence !== this.reconcileSequence) return;
-    if (this.player.track()?.id !== track.id) this.player.load(track);
+    const changedTrack = this.player.track()?.id !== track.id;
+    if (changedTrack) this.player.load(track);
     const expectedSeconds = estimatedPositionSeconds(snapshot);
-    if (Math.abs(this.player.positionSeconds() - expectedSeconds) > 2) {
+    // Starting close to zero should not force a Range restart while metadata is
+    // still arriving. Transfers and genuine drift still seek immediately.
+    if ((changedTrack && expectedSeconds > 5)
+      || (!changedTrack && Math.abs(this.player.positionSeconds() - expectedSeconds) > 2)) {
       this.player.seek(expectedSeconds);
     }
-    if (snapshot.status === 'playing' && !this.player.playing()) {
+    if (snapshot.status === 'playing' && !this.player.requested()) {
       await this.player.resume();
-    } else if (snapshot.status !== 'playing' && this.player.playing()) {
+    } else if (snapshot.status !== 'playing' && this.player.requested()) {
       this.player.pause();
     }
   }
@@ -212,6 +224,10 @@ export class PlaybackSyncService {
   private async publishState(): Promise<void> {
     const snapshot = this.snapshot();
     if (!snapshot || !this.ownsLease(snapshot) || !this.socket.connected) return;
+    // Loading is not evidence of either playback or pause. Wait for actual
+    // progress or a terminal recovery failure before changing durable state.
+    if (this.player.requested() && !this.player.playing()
+      && ['loading', 'buffering'].includes(this.player.phase())) return;
     await this.sendCommand((ack) => this.socket.emit('playback:update', {
       commandId: crypto.randomUUID(),
       expectedRevision: snapshot.revision,
@@ -254,23 +270,36 @@ export class PlaybackSyncService {
   }
 
   private async loadQueueTracks(snapshot: PlaybackSnapshot): Promise<void> {
-    await Promise.all(snapshot.queue.map((item) => this.loadTrack(item.trackRef)));
-    this.queueTracks.set(Object.fromEntries(this.tracks));
+    const references = [snapshot.currentTrackRef, ...snapshot.queue.map((item) => item.trackRef)]
+      .filter((reference): reference is string => Boolean(reference));
+    const unique = [...new Set(references)];
+    for (let index = 0; index < unique.length; index += 4) {
+      await Promise.all(unique.slice(index, index + 4).map((reference) => this.loadTrack(reference)));
+    }
+    this.queueTracks.set(Object.fromEntries(
+      snapshot.queue.flatMap((item) => {
+        const track = this.tracks.get(item.trackRef);
+        return track ? [[item.trackRef, track]] : [];
+      }),
+    ));
   }
 
   private async loadTrack(reference: string): Promise<Track | null> {
     const known = this.tracks.get(reference);
     if (known) return known;
-    try {
-      const track = await firstValueFrom(
-        this.http.get<Track>(`/api/music/tracks/${encodeURIComponent(reference)}`),
-      );
+    const pending = this.trackLoads.get(reference);
+    if (pending) return pending;
+    const load = firstValueFrom(
+      this.http.get<Track>(`/api/music/tracks/${encodeURIComponent(reference)}`),
+    ).then((track) => {
       this.remember(track);
       return track;
-    } catch {
+    }).catch(() => {
       this.error.set('No pudimos recuperar una canción de la cola.');
       return null;
-    }
+    }).finally(() => this.trackLoads.delete(reference));
+    this.trackLoads.set(reference, load);
+    return load;
   }
 
   private remember(track: Track): void {

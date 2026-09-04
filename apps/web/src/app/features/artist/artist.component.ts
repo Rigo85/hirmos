@@ -1,14 +1,13 @@
 import { HttpClient } from '@angular/common/http';
-import { DecimalPipe } from '@angular/common';
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import type { ArtistDetail, Track } from '@hirmos/contracts';
 import { firstValueFrom } from 'rxjs';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
-import { AppIconComponent } from '../../shared/app-icon.component';
+import { TrackRowComponent } from '../../shared/track-row.component';
 
-@Component({ selector: 'app-artist', imports: [RouterLink, DecimalPipe, AppIconComponent], templateUrl: './artist.component.html' })
+@Component({ selector: 'app-artist', imports: [RouterLink, TrackRowComponent], templateUrl: './artist.component.html' })
 export class ArtistComponent {
   private readonly http = inject(HttpClient);
   private readonly route = inject(ActivatedRoute);

@@ -52,7 +52,7 @@ describe('ArtistComponent', () => {
 });
 
 function popularTrackButtons(root: HTMLElement): HTMLButtonElement[] {
-  return Array.from(root.querySelectorAll<HTMLButtonElement>('#artist-popular-tracks > li > button'));
+  return Array.from(root.querySelectorAll<HTMLButtonElement>('#artist-popular-tracks .track-row__title'));
 }
 
 function artistWithPopularTracks(count: number): ArtistDetail {

@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Readable } from 'node:stream';
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { configureMusicSourceRequestSchema } from '@hirmos/contracts';
 import {
   MusicSourceService,
@@ -192,6 +193,9 @@ export async function registerMusicSourceRoutes(
     const { reference } = request.params as { reference: string };
     const controller = new AbortController();
     request.raw.once('aborted', () => controller.abort());
+    reply.raw.once('close', () => {
+      if (!reply.raw.writableFinished) controller.abort();
+    });
     try {
       const range = normalizeRange(request.headers.range);
       const media = await service.stream(
@@ -199,7 +203,7 @@ export async function registerMusicSourceRoutes(
         range,
         controller.signal,
       );
-      return sendMedia(reply, media, 'private, no-store');
+      return sendMedia(reply, media, 'private, no-store', controller.signal);
     } catch (error) {
       return mediaFailure(request, reply, error);
     }
@@ -276,6 +280,7 @@ function sendMedia(
   reply: FastifyReply,
   media: Awaited<ReturnType<MusicSourceService['stream']>>,
   cacheControl: string,
+  signal?: AbortSignal,
 ): FastifyReply {
   reply.code(media.status);
   reply.header('cache-control', cacheControl);
@@ -283,7 +288,10 @@ function sendMedia(
   if (media.contentLength) reply.header('content-length', media.contentLength);
   if (media.contentRange) reply.header('content-range', media.contentRange);
   if (media.acceptRanges) reply.header('accept-ranges', media.acceptRanges);
-  return reply.send(Readable.from(media.body as unknown as AsyncIterable<Uint8Array>));
+  return reply.send(Readable.fromWeb(
+    media.body as unknown as NodeReadableStream<Uint8Array>,
+    { signal },
+  ));
 }
 
 function normalizeRange(value: string | undefined): string | undefined {
