@@ -193,7 +193,7 @@ export class NavidromeAdapter implements MusicSourceAdapter {
         id: artistId, count: '12', includeNotPresent: 'false',
       }, signal).catch(() => null),
       this.call<{ topSongs?: { song?: SourceSong[] } }>(
-        'getTopSongs', { artist: response.artist.name, count: '10' }, signal,
+        'getTopSongs', { artist: response.artist.name, count: '50' }, signal,
       ).catch(() => null),
     ]);
     return {

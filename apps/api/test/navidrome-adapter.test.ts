@@ -120,8 +120,10 @@ describe('NavidromeAdapter', () => {
   });
 
   it('enriches an artist with safe biography, related artists and public top songs', async () => {
+    let topSongsRequest: URL | null = null;
     const fetchImplementation = vi.fn(async (input: URL | RequestInfo) => {
-      const endpoint = new URL(String(input)).pathname;
+      const url = new URL(String(input));
+      const endpoint = url.pathname;
       if (endpoint.includes('getArtistInfo2')) {
         return Response.json({ 'subsonic-response': {
           status: 'ok', version: '1.16.1', artistInfo2: {
@@ -132,6 +134,7 @@ describe('NavidromeAdapter', () => {
         } });
       }
       if (endpoint.includes('getTopSongs')) {
+        topSongsRequest = url;
         return Response.json({ 'subsonic-response': {
           status: 'ok', version: '1.16.1', topSongs: { song: [{
             id: 'top-track', title: 'La popular', artist: 'Banda', album: 'Disco', duration: 180,
@@ -155,5 +158,7 @@ describe('NavidromeAdapter', () => {
     expect(artist.externalUrl).toBe('https://www.last.fm/music/Example');
     expect(artist.similarArtists[0]).toMatchObject({ id: 'similar-id', name: 'Banda similar' });
     expect(artist.topTracks[0]).toMatchObject({ id: 'top-track', title: 'La popular', durationMs: 180_000 });
+    expect(topSongsRequest).not.toBeNull();
+    expect(topSongsRequest!.searchParams.get('count')).toBe('50');
   });
 });
