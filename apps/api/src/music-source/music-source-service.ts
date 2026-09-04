@@ -226,9 +226,12 @@ export class MusicSourceService {
     return this.adapterFor(source).getCoverArt(remoteId, signal);
   }
 
-  public async lyrics(reference: string, signal?: AbortSignal) {
+  public async lyrics(reference: string, userId: string, signal?: AbortSignal) {
     const { source, remoteId } = await this.resolveReference(reference);
     const adapter = this.adapterFor(source);
+    const adjustmentMs = await this.lyricsRepository?.getAdjustment(
+      userId, source.id, remoteId,
+    ) ?? 0;
     if (this.lyricsProvider && this.lyricsRepository) {
       const track = await adapter.getTrack(remoteId, signal);
       const fingerprint = lyricsFingerprint(track);
@@ -236,7 +239,7 @@ export class MusicSourceService {
         sourceId: source.id, remoteTrackId: remoteId,
         provider: this.lyricsProvider.name, fingerprint,
       });
-      if (cached?.length) return { lyrics: cached };
+      if (cached?.length) return { lyrics: cached, adjustmentMs };
       if (cached === undefined) {
         try {
           const providerSignal = signal
@@ -250,13 +253,26 @@ export class MusicSourceService {
             instrumental: found?.instrumental,
             document: found?.document ?? null,
           });
-          if (found) return { lyrics: [found.document] };
+          if (found) return { lyrics: [found.document], adjustmentMs };
         } catch {
           // Public providers are best-effort; the source remains the reliable fallback.
         }
       }
     }
-    return { lyrics: await adapter.getLyrics(remoteId, signal) };
+    return { lyrics: await adapter.getLyrics(remoteId, signal), adjustmentMs };
+  }
+
+  public async setLyricsAdjustment(
+    reference: string,
+    userId: string,
+    adjustmentMs: number,
+  ): Promise<{ adjustmentMs: number }> {
+    if (!this.lyricsRepository) throw new MusicSourceUnavailableError('Lyrics are not configured');
+    const { source, remoteId } = await this.resolveReference(reference);
+    await this.lyricsRepository.putAdjustment({
+      userId, sourceId: source.id, remoteTrackId: remoteId, adjustmentMs,
+    });
+    return { adjustmentMs };
   }
 
   public async track(reference: string, signal?: AbortSignal) {

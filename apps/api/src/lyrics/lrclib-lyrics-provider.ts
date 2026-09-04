@@ -57,6 +57,8 @@ export class LrclibLyricsProvider implements LyricsProvider {
 
 export function parseLrc(value: string): Array<{ startMs: number; text: string }> {
   const lines: Array<{ startMs: number; text: string }> = [];
+  const offsetMatch = value.match(/^\s*\[offset:([+-]?\d+)\]\s*$/im);
+  const offsetMs = offsetMatch ? Number(offsetMatch[1]) : 0;
   for (const row of value.split(/\r?\n/)) {
     const matches = [...row.matchAll(/\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g)];
     if (!matches.length) continue;
@@ -64,7 +66,9 @@ export function parseLrc(value: string): Array<{ startMs: number; text: string }
     for (const match of matches) {
       const fraction = (match[3] ?? '').padEnd(3, '0').slice(0, 3);
       lines.push({
-        startMs: Number(match[1]) * 60_000 + Number(match[2]) * 1_000 + Number(fraction || 0),
+        startMs: Math.max(0,
+          Number(match[1]) * 60_000 + Number(match[2]) * 1_000
+            + Number(fraction || 0) - offsetMs),
         text,
       });
     }

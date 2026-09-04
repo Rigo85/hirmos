@@ -1,0 +1,70 @@
+<aside
+  class="lyrics-panel"
+  [class.lyrics-panel--open]="open()"
+  [attr.aria-hidden]="!open()"
+  [attr.inert]="open() ? null : ''"
+  aria-label="Letra de la canción"
+>
+  <div class="lyrics-panel__head">
+    <div>
+      <p class="eyebrow">LETRA</p>
+      <h2>{{ track()?.title || 'Sin canción' }}</h2>
+      @if (lyricsDocument()?.displayArtist) {
+        <p class="lyrics-panel__artist">{{ lyricsDocument()!.displayArtist }}</p>
+      }
+    </div>
+    <button class="icon-button" type="button" (click)="close()" aria-label="Cerrar letra">
+      <app-icon name="close" />
+    </button>
+  </div>
+
+  @if (synchronized()) {
+    <div class="lyrics-timing" aria-label="Ajuste de sincronía">
+      <button type="button" (click)="adjustTiming(-100)" aria-label="Retrasar letra 100 milisegundos">−</button>
+      <button class="lyrics-timing__value" type="button" (click)="resetTiming()" [disabled]="adjustmentMs() === 0" aria-label="Restablecer ajuste de sincronía">{{ formatAdjustment() }}</button>
+      <button type="button" (click)="adjustTiming(100)" aria-label="Adelantar letra 100 milisegundos">+</button>
+    </div>
+  }
+
+  @if (loading()) {
+    <div class="lyrics-message" role="status"><span></span>Cargando letra…</div>
+  } @else if (error()) {
+    <p class="lyrics-message lyrics-message--error" role="status">{{ error() }}</p>
+  } @else if (lyricsDocument(); as lyrics) {
+    <div
+      #scrollContainer
+      class="lyrics-scroll"
+      tabindex="0"
+      [attr.lang]="lyrics.language"
+      (wheel)="pauseFollowing()"
+      (touchstart)="pauseFollowing()"
+      (keydown)="handleScrollKey($event)"
+    >
+      <div class="lyrics-lines" [class.lyrics-lines--plain]="!synchronized()">
+        @for (line of lyrics.lines; track $index) {
+          @if (synchronized() && line.startMs !== null) {
+            <button
+              type="button"
+              class="lyrics-line"
+              [class.lyrics-line--active]="$index === activeLineIndex()"
+              [class.lyrics-line--past]="$index < activeLineIndex()"
+              [attr.data-lyric-index]="$index"
+              [attr.aria-current]="$index === activeLineIndex() ? 'true' : null"
+              [attr.aria-label]="'Ir a ' + line.text"
+              (click)="seekToLine(line)"
+            >{{ line.text || ' ' }}</button>
+          } @else {
+            <p class="lyrics-line lyrics-line--plain">{{ line.text || ' ' }}</p>
+          }
+        }
+      </div>
+    </div>
+  }
+
+  @if (adjustmentError()) {
+    <p class="lyrics-adjustment-error" role="status">{{ adjustmentError() }}</p>
+  }
+  @if (synchronized() && !following()) {
+    <button class="lyrics-follow" type="button" (click)="resumeFollowing()">Seguir letra</button>
+  }
+</aside>

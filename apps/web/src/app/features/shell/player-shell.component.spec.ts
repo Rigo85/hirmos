@@ -38,6 +38,7 @@ describe('PlayerShellComponent', () => {
             connect: vi.fn(), disconnect: vi.fn(), trackFor: vi.fn(), ownsLease: () => false,
             hasActiveRemotePlayer: () => false, previous: vi.fn(), next: vi.fn(), toggle: vi.fn(),
             seek: vi.fn(), removeQueueItem: vi.fn(), claimHere: vi.fn(),
+            currentPositionSeconds: () => 0,
           },
         },
       ],
@@ -99,7 +100,8 @@ describe('PlayerShellComponent', () => {
     (fixture.nativeElement.querySelector(
       '.player-actions [aria-label="Mostrar letra"]',
     ) as HTMLButtonElement).click();
-    http.expectOne('/api/music/tracks/track-a/lyrics').flush({ lyrics: [] });
+    fixture.detectChanges();
+    http.expectOne('/api/music/tracks/track-a/lyrics').flush({ lyrics: [], adjustmentMs: 0 });
     await fixture.whenStable();
     fixture.detectChanges();
 

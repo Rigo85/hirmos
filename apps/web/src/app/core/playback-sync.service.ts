@@ -200,6 +200,15 @@ export class PlaybackSyncService {
       && Date.parse(snapshot.leaseExpiresAt) > Date.now();
   }
 
+  public currentPositionSeconds(now = Date.now()): number {
+    const snapshot = this.snapshot();
+    if (!snapshot?.currentTrackRef) return 0;
+    if (this.ownsLease(snapshot) && this.player.track()?.id === snapshot.currentTrackRef) {
+      return this.player.positionSeconds();
+    }
+    return estimatedPositionSeconds(snapshot, now);
+  }
+
   private receive(snapshot: PlaybackSnapshot): void {
     this.snapshot.set(snapshot);
     this.snapshotFresh.set(true);
@@ -388,8 +397,8 @@ function deviceType(): 'desktop' | 'mobile' | 'tablet' {
   return 'desktop';
 }
 
-function estimatedPositionSeconds(snapshot: PlaybackSnapshot): number {
+export function estimatedPositionSeconds(snapshot: PlaybackSnapshot, now = Date.now()): number {
   const anchor = snapshot.positionMs / 1_000;
   if (snapshot.status !== 'playing') return anchor;
-  return anchor + Math.max(0, Date.now() - Date.parse(snapshot.positionObservedAt)) / 1_000;
+  return anchor + Math.max(0, now - Date.parse(snapshot.positionObservedAt)) / 1_000;
 }

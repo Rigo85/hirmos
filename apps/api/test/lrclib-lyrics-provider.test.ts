@@ -39,4 +39,11 @@ describe('parseLrc', () => {
       { startMs: 1_000, text: 'Eco' }, { startMs: 2_000, text: 'Eco' },
     ]);
   });
+
+  it('applies a positive global offset by showing lyrics sooner', () => {
+    expect(parseLrc('[offset:+250]\n[00:01.00]Antes\n[00:00.10]Inicio')).toEqual([
+      { startMs: 0, text: 'Inicio' },
+      { startMs: 750, text: 'Antes' },
+    ]);
+  });
 });

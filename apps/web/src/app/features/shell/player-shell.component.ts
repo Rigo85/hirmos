@@ -1,22 +1,19 @@
-import { HttpClient } from '@angular/common/http';
 import { Component, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
-import type { LyricsResponse } from '@hirmos/contracts';
-import { firstValueFrom } from 'rxjs';
 import { AudioPlayerService } from '../../core/audio-player.service';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { SessionStore } from '../../core/session.store';
 import { AppIconComponent } from '../../shared/app-icon.component';
+import { LyricsPanelComponent } from '../lyrics/lyrics-panel.component';
 
 @Component({
   selector: 'app-player-shell',
-  imports: [RouterLink, RouterLinkActive, RouterOutlet, AppIconComponent],
+  imports: [RouterLink, RouterLinkActive, RouterOutlet, AppIconComponent, LyricsPanelComponent],
   templateUrl: './player-shell.component.html',
 })
 export class PlayerShellComponent {
   private readonly sidebarPreferenceKey = 'hirmos.sidebar.collapsed';
   private readonly router = inject(Router);
-  private readonly http = inject(HttpClient);
   protected readonly sessionStore = inject(SessionStore);
   protected readonly player = inject(AudioPlayerService);
   protected readonly playback = inject(PlaybackSyncService);
@@ -24,8 +21,6 @@ export class PlayerShellComponent {
   protected readonly mobileMenuOpen = signal(false);
   protected readonly queueOpen = signal(false);
   protected readonly lyricsOpen = signal(false);
-  protected readonly lyrics = signal<LyricsResponse['lyrics'][number] | null>(null);
-  protected readonly lyricsError = signal<string | null>(null);
   protected readonly currentTrack = computed(() => {
     const snapshot = this.playback.snapshot();
     return snapshot?.currentTrackRef
@@ -55,21 +50,10 @@ export class PlayerShellComponent {
     await this.router.navigate(['/login']);
   }
 
-  protected async toggleLyrics(): Promise<void> {
-    const track = this.currentTrack();
-    if (!track) return;
+  protected toggleLyrics(): void {
+    if (!this.currentTrack()) return;
     this.queueOpen.set(false);
     this.lyricsOpen.set(!this.lyricsOpen());
-    if (!this.lyricsOpen()) return;
-    this.lyrics.set(null);
-    this.lyricsError.set(null);
-    try {
-      const response = await firstValueFrom(this.http.get<LyricsResponse>(
-        `/api/music/tracks/${encodeURIComponent(track.id)}/lyrics`,
-      ));
-      this.lyrics.set(response.lyrics[0] ?? null);
-      if (!response.lyrics.length) this.lyricsError.set('Esta canción no tiene letra disponible.');
-    } catch { this.lyricsError.set('No pudimos cargar la letra.'); }
   }
 
   protected toggleQueue(): void {

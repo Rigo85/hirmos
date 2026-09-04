@@ -223,21 +223,27 @@ export class NavidromeAdapter implements MusicSourceAdapter {
           displayArtist?: string;
           displayTitle?: string;
           lang?: string;
+          offset?: number;
           synced?: boolean;
           line?: Array<{ start?: number; value?: string }>;
         }>;
       };
     }>('getLyricsBySongId', { id: trackId }, signal).catch(() => null);
-    const documents = (structured?.lyricsList?.structuredLyrics ?? []).map((lyrics) => ({
-      displayArtist: lyrics.displayArtist ?? null,
-      displayTitle: lyrics.displayTitle ?? null,
-      language: lyrics.lang && lyrics.lang !== 'xxx' ? lyrics.lang : null,
-      synced: Boolean(lyrics.synced),
-      lines: (lyrics.line ?? []).map((line) => ({
-        startMs: typeof line.start === 'number' ? line.start : null,
-        text: line.value ?? '',
-      })),
-    }));
+    const documents = (structured?.lyricsList?.structuredLyrics ?? []).map((lyrics) => {
+      const offsetMs = typeof lyrics.offset === 'number' ? lyrics.offset : 0;
+      return {
+        displayArtist: lyrics.displayArtist ?? null,
+        displayTitle: lyrics.displayTitle ?? null,
+        language: lyrics.lang && lyrics.lang !== 'xxx' ? lyrics.lang : null,
+        synced: Boolean(lyrics.synced),
+        lines: (lyrics.line ?? []).map((line) => ({
+          startMs: typeof line.start === 'number'
+            ? Math.max(0, line.start - offsetMs)
+            : null,
+          text: line.value ?? '',
+        })),
+      };
+    });
     if (documents.length) return documents;
 
     const song = await this.getTrack(trackId, signal);

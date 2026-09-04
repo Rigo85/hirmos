@@ -2,6 +2,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { NavidromeAdapter } from '../src/music-source/navidrome-adapter.js';
 
 describe('NavidromeAdapter', () => {
+  it('applies the OpenSubsonic lyrics offset using its documented direction', async () => {
+    const adapter = new NavidromeAdapter({
+      baseUrl: new URL('https://music.example'), username: 'service', password: 'secret',
+      fetchImplementation: vi.fn(async () => Response.json({ 'subsonic-response': {
+        status: 'ok', version: '1.16.1', lyricsList: { structuredLyrics: [{
+          displayArtist: 'Banda', displayTitle: 'Tema', lang: 'es', synced: true,
+          offset: 200, line: [{ start: 100, value: 'Inicio' }, { start: 1_000, value: 'Verso' }],
+        }] },
+      } })) as typeof fetch,
+    });
+
+    await expect(adapter.getLyrics('track-id')).resolves.toEqual([{
+      displayArtist: 'Banda', displayTitle: 'Tema', language: 'es', synced: true,
+      lines: [{ startMs: 0, text: 'Inicio' }, { startMs: 800, text: 'Verso' }],
+    }]);
+  });
+
   it('discovers extensions without exposing the password in requests', async () => {
     const urls: URL[] = [];
     const fetchImplementation = vi.fn(async (input: URL | RequestInfo) => {

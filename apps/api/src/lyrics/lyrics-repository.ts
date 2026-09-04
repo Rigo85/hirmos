@@ -13,6 +13,37 @@ interface CacheRow {
 export class LyricsRepository {
   public constructor(private readonly db: Database) {}
 
+  public async getAdjustment(
+    userId: string,
+    sourceId: string,
+    remoteTrackId: string,
+  ): Promise<number> {
+    const result = await this.db.query<{ adjustment_ms: number }>(
+      `SELECT adjustment_ms
+         FROM user_lyrics_adjustments
+        WHERE user_id = $1 AND source_id = $2 AND remote_track_id = $3`,
+      [userId, sourceId, remoteTrackId],
+    );
+    return result.rows[0]?.adjustment_ms ?? 0;
+  }
+
+  public async putAdjustment(input: {
+    userId: string;
+    sourceId: string;
+    remoteTrackId: string;
+    adjustmentMs: number;
+  }): Promise<void> {
+    await this.db.query(
+      `INSERT INTO user_lyrics_adjustments
+         (user_id, source_id, remote_track_id, adjustment_ms)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, source_id, remote_track_id) DO UPDATE SET
+         adjustment_ms = EXCLUDED.adjustment_ms,
+         updated_at = now()`,
+      [input.userId, input.sourceId, input.remoteTrackId, input.adjustmentMs],
+    );
+  }
+
   public async get(input: {
     sourceId: string; remoteTrackId: string; provider: string; fingerprint: string;
   }): Promise<SourceLyrics[] | null | undefined> {

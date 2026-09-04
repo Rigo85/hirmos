@@ -241,8 +241,15 @@ export const lyricsDocumentSchema = z.object({
   synced: z.boolean(),
   lines: z.array(lyricLineSchema),
 });
-export const lyricsResponseSchema = z.object({ lyrics: z.array(lyricsDocumentSchema) });
+export const lyricsResponseSchema = z.object({
+  lyrics: z.array(lyricsDocumentSchema),
+  adjustmentMs: z.number().int().min(-30_000).max(30_000),
+});
 export type LyricsResponse = z.infer<typeof lyricsResponseSchema>;
+export const lyricsAdjustmentRequestSchema = z.object({
+  adjustmentMs: z.number().int().min(-30_000).max(30_000),
+});
+export type LyricsAdjustmentRequest = z.infer<typeof lyricsAdjustmentRequestSchema>;
 
 export const playbackStatusSchema = z.enum(['paused', 'playing', 'stopped']);
 export const playbackQueueItemSchema = z.object({

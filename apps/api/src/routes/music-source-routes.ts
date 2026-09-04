@@ -1,7 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Readable } from 'node:stream';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
-import { configureMusicSourceRequestSchema } from '@hirmos/contracts';
+import {
+  configureMusicSourceRequestSchema,
+  lyricsAdjustmentRequestSchema,
+} from '@hirmos/contracts';
 import {
   MusicSourceService,
   MusicSourceUnavailableError,
@@ -284,7 +287,35 @@ export async function registerMusicSourceRoutes(
     if (!service) return notConfigured(request, reply);
     const { reference } = request.params as { reference: string };
     try {
-      return reply.send(await service.lyrics(reference, AbortSignal.timeout(15_000)));
+      return reply.send(await service.lyrics(
+        reference,
+        request.authSession!.response.user.id,
+        AbortSignal.timeout(15_000),
+      ));
+    } catch (error) {
+      return mediaFailure(request, reply, error);
+    }
+  });
+
+  app.put('/api/music/tracks/:reference/lyrics-adjustment', async (request, reply) => {
+    const denied = requireAuthentication(request, reply);
+    if (denied) return denied;
+    if (!service) return notConfigured(request, reply);
+    const parsed = lyricsAdjustmentRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        code: 'INVALID_LYRICS_ADJUSTMENT',
+        message: 'El ajuste de letra debe estar entre -30 y 30 segundos.',
+        requestId: request.id,
+      });
+    }
+    const { reference } = request.params as { reference: string };
+    try {
+      return reply.send(await service.setLyricsAdjustment(
+        reference,
+        request.authSession!.response.user.id,
+        parsed.data.adjustmentMs,
+      ));
     } catch (error) {
       return mediaFailure(request, reply, error);
     }
