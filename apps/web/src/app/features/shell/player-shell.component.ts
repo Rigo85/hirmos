@@ -14,11 +14,13 @@ import { AppIconComponent } from '../../shared/app-icon.component';
   templateUrl: './player-shell.component.html',
 })
 export class PlayerShellComponent {
+  private readonly sidebarPreferenceKey = 'hirmos.sidebar.collapsed';
   private readonly router = inject(Router);
   private readonly http = inject(HttpClient);
   protected readonly sessionStore = inject(SessionStore);
   protected readonly player = inject(AudioPlayerService);
   protected readonly playback = inject(PlaybackSyncService);
+  protected readonly sidebarCollapsed = signal(readSidebarPreference(this.sidebarPreferenceKey));
   protected readonly mobileMenuOpen = signal(false);
   protected readonly queueOpen = signal(false);
   protected readonly lyricsOpen = signal(false);
@@ -32,6 +34,14 @@ export class PlayerShellComponent {
   });
 
   public constructor() { this.playback.connect(); }
+
+  protected toggleSidebar(): void {
+    this.sidebarCollapsed.update((collapsed) => {
+      const next = !collapsed;
+      try { localStorage.setItem(this.sidebarPreferenceKey, String(next)); } catch { /* preference is optional */ }
+      return next;
+    });
+  }
 
   protected search(event: Event, input: HTMLInputElement): void {
     event.preventDefault();
@@ -81,4 +91,8 @@ export class PlayerShellComponent {
     if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
     return `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
   }
+}
+
+function readSidebarPreference(key: string): boolean {
+  try { return localStorage.getItem(key) === 'true'; } catch { return false; }
 }

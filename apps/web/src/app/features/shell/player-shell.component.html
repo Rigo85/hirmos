@@ -1,15 +1,15 @@
-<div class="app-shell" [class.queue-visible]="queueOpen()">
+<div class="app-shell" [class.queue-visible]="queueOpen()" [class.app-shell--sidebar-collapsed]="sidebarCollapsed()">
   <aside class="sidebar" [class.sidebar--open]="mobileMenuOpen()">
-    <a class="brand" routerLink="/" aria-label="Hirmos, inicio"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>Hirmos</span></a>
+    <div class="sidebar__header"><a class="brand" routerLink="/" aria-label="Hirmos, inicio"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand__name">Hirmos</span></a><button class="sidebar-collapse" type="button" (click)="toggleSidebar()" [attr.aria-label]="sidebarCollapsed() ? 'Expandir menú lateral' : 'Contraer menú lateral'" [attr.title]="sidebarCollapsed() ? 'Expandir menú' : 'Contraer menú'"><app-icon [name]="sidebarCollapsed() ? 'panel-open' : 'panel-close'" /></button></div>
     <nav aria-label="Navegación principal">
-      <a class="nav-link" routerLink="/" [routerLinkActiveOptions]="{exact:true}" routerLinkActive="nav-link--active" (click)="mobileMenuOpen.set(false)"><app-icon name="home" /> Inicio</a>
-      <a class="nav-link" routerLink="/library" routerLinkActive="nav-link--active" (click)="mobileMenuOpen.set(false)"><app-icon name="library" /> Biblioteca</a>
-      <a class="nav-link" routerLink="/search" routerLinkActive="nav-link--active" (click)="mobileMenuOpen.set(false)"><app-icon name="search" /> Buscar</a>
+      <a class="nav-link" routerLink="/" [routerLinkActiveOptions]="{exact:true}" routerLinkActive="nav-link--active" (click)="mobileMenuOpen.set(false)" [attr.title]="sidebarCollapsed() ? 'Inicio' : null"><app-icon name="home" /><span class="nav-link__label">Inicio</span></a>
+      <a class="nav-link" routerLink="/library" routerLinkActive="nav-link--active" (click)="mobileMenuOpen.set(false)" [attr.title]="sidebarCollapsed() ? 'Biblioteca' : null"><app-icon name="library" /><span class="nav-link__label">Biblioteca</span></a>
+      <a class="nav-link" routerLink="/search" routerLinkActive="nav-link--active" (click)="mobileMenuOpen.set(false)" [attr.title]="sidebarCollapsed() ? 'Buscar' : null"><app-icon name="search" /><span class="nav-link__label">Buscar</span></a>
     </nav>
     @if (sessionStore.session()?.user?.role === 'admin') {
-      <div class="sidebar__admin"><p class="nav-label">ADMINISTRACIÓN</p><a class="nav-link" routerLink="/admin/users"><app-icon name="users" /> Invitar oyentes</a><a class="nav-link" routerLink="/admin/source"><app-icon name="settings" /> Fuente musical</a></div>
+      <div class="sidebar__admin"><p class="nav-label">ADMINISTRACIÓN</p><a class="nav-link" routerLink="/admin/users" [attr.title]="sidebarCollapsed() ? 'Invitar oyentes' : null"><app-icon name="users" /><span class="nav-link__label">Invitar oyentes</span></a><a class="nav-link" routerLink="/admin/source" [attr.title]="sidebarCollapsed() ? 'Fuente musical' : null"><app-icon name="settings" /><span class="nav-link__label">Fuente musical</span></a></div>
     }
-    <button class="profile-button" type="button" (click)="logout()"><span class="avatar">{{ sessionStore.session()?.user?.displayName?.charAt(0) || 'H' }}</span><span><strong>{{ sessionStore.session()?.user?.displayName || 'Oyente' }}</strong><small>Cerrar sesión</small></span></button>
+    <button class="profile-button" type="button" (click)="logout()" [attr.title]="sidebarCollapsed() ? 'Cerrar sesión' : null"><span class="avatar">{{ sessionStore.session()?.user?.displayName?.charAt(0) || 'H' }}</span><span class="profile-button__label"><strong>{{ sessionStore.session()?.user?.displayName || 'Oyente' }}</strong><small>Cerrar sesión</small></span></button>
   </aside>
 
   <main class="main-content">

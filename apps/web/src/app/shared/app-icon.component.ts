@@ -8,6 +8,8 @@ export type AppIconName =
   | 'lyrics'
   | 'menu'
   | 'next'
+  | 'panel-close'
+  | 'panel-open'
   | 'pause'
   | 'play'
   | 'previous'
@@ -43,6 +45,14 @@ export type AppIconName =
         }
         @case ('next') {
           <path d="M18 5v14M5.5 5.8 15 12l-9.5 6.2z" />
+        }
+        @case ('panel-close') {
+          <rect x="3.5" y="4" width="17" height="16" rx="2" />
+          <path d="M9 4v16m6.5-5.2L12.7 12l2.8-2.8" />
+        }
+        @case ('panel-open') {
+          <rect x="3.5" y="4" width="17" height="16" rx="2" />
+          <path d="M9 4v16m3.5-10.8 2.8 2.8-2.8 2.8" />
         }
         @case ('play') {
           <path class="icon-fill" d="m8.2 5.5 10 6.5-10 6.5z" />
