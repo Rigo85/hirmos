@@ -55,26 +55,34 @@ export class ActivityRepository {
       input.after.positionMs, listenedMs);
   }
 
-  public async recentTrackReferences(userId: string, limit: number): Promise<string[]> {
+  public async recentTrackReferences(
+    userId: string,
+    limit: number,
+    offset = 0,
+  ): Promise<string[]> {
     const result = await this.db.query<{ source_id: string; remote_track_id: string }>(
       `SELECT source_id, remote_track_id
          FROM user_track_stats
         WHERE user_id = $1 AND last_played_at IS NOT NULL
         ORDER BY last_played_at DESC
-        LIMIT $2`,
-      [userId, limit],
+        LIMIT $2 OFFSET $3`,
+      [userId, limit, offset],
     );
     return result.rows.map((row) => encodeTrackReference(row.source_id, row.remote_track_id));
   }
 
-  public async mostPlayedTrackReferences(userId: string, limit: number): Promise<string[]> {
+  public async mostPlayedTrackReferences(
+    userId: string,
+    limit: number,
+    offset = 0,
+  ): Promise<string[]> {
     const result = await this.db.query<{ source_id: string; remote_track_id: string }>(
       `SELECT source_id, remote_track_id
          FROM user_track_stats
         WHERE user_id = $1 AND (listened_ms > 0 OR play_starts > 0)
         ORDER BY listened_ms DESC, completions DESC, play_starts DESC, last_played_at DESC
-        LIMIT $2`,
-      [userId, limit],
+        LIMIT $2 OFFSET $3`,
+      [userId, limit, offset],
     );
     return result.rows.map((row) => encodeTrackReference(row.source_id, row.remote_track_id));
   }

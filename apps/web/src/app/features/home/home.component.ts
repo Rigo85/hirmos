@@ -34,4 +34,11 @@ export class HomeComponent {
   }
 
   protected play(track: Track): void { void this.playback.select(track); }
+
+  protected scrollCarousel(list: HTMLElement, direction: -1 | 1): void {
+    list.scrollBy({
+      left: direction * Math.max(280, list.clientWidth * 0.8),
+      behavior: 'smooth',
+    });
+  }
 }

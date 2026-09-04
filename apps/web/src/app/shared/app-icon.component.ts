@@ -1,6 +1,8 @@
 import { Component, input } from '@angular/core';
 
 export type AppIconName =
+  | 'arrow-left'
+  | 'arrow-right'
   | 'close'
   | 'device'
   | 'home'
@@ -24,6 +26,12 @@ export type AppIconName =
   template: `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       @switch (name()) {
+        @case ('arrow-left') {
+          <path d="m14.5 6-6 6 6 6" />
+        }
+        @case ('arrow-right') {
+          <path d="m9.5 6 6 6-6 6" />
+        }
         @case ('home') {
           <path d="M3.5 10.7 12 3.8l8.5 6.9" />
           <path d="M5.6 9.6v10.1h12.8V9.6M9.4 19.7v-6.1h5.2v6.1" />

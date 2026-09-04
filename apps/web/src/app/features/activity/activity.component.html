@@ -1,0 +1,17 @@
+<div class="content-frame activity-page">
+  <header class="activity-page__header">
+    <p class="eyebrow">{{ copy().eyebrow }}</p>
+    <h1>{{ copy().title }}</h1>
+    <p class="muted">{{ copy().description }}</p>
+  </header>
+
+  @if (error()) { <p class="form-error" role="alert">{{ error() }}</p> }
+  @if (!loading() && !tracks().length && !error()) {
+    <section class="empty-state"><span>♫</span><h2>Todavía no hay suficiente actividad</h2><p>Cuando escuches música, aparecerá aquí.</p></section>
+  }
+  @if (tracks().length) {
+    <ol class="track-results activity-results">@for (track of tracks(); track track.id; let index = $index) { <li appTrackRow [track]="track" [position]="index + 1" (playTrack)="play(track)"></li> }</ol>
+  }
+  @if (loading()) { <div class="page-loading page-loading--compact"><span></span><p>Cargando actividad…</p></div> }
+  @if (nextCursor() && !loading()) { <div class="load-more"><button class="outline-button" type="button" (click)="loadMore()">Cargar más</button></div> }
+</div>

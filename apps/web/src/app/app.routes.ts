@@ -60,6 +60,11 @@ export const routes: Routes = [
           import('./features/search/search.component').then((module) => module.SearchComponent),
       },
       {
+        path: 'activity/:kind',
+        loadComponent: () =>
+          import('./features/activity/activity.component').then((module) => module.ActivityComponent),
+      },
+      {
         path: 'albums/:id',
         loadComponent: () =>
           import('./features/album/album.component').then((module) => module.AlbumComponent),

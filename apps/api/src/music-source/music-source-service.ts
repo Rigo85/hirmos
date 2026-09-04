@@ -104,6 +104,23 @@ export class MusicSourceService {
     };
   }
 
+  public async activityTracks(
+    userId: string,
+    kind: 'recent' | 'most-played',
+    limit: number,
+    cursor?: string,
+  ) {
+    const offset = parseCursor(cursor);
+    const references = kind === 'recent'
+      ? await this.activity?.recentTrackReferences(userId, limit + 1, offset) ?? []
+      : await this.activity?.mostPlayedTrackReferences(userId, limit + 1, offset) ?? [];
+    const page = references.slice(0, limit);
+    return {
+      tracks: await this.resolveTracks(page),
+      nextCursor: references.length > limit ? String(offset + page.length) : null,
+    };
+  }
+
   public async albums(
     sort: 'random' | 'newest' | 'frequent' | 'recent' | 'alphabeticalByName',
     limit: number,
@@ -250,10 +267,13 @@ export class MusicSourceService {
   }
 
   private async resolveTracks(references: string[]): Promise<Track[]> {
-    const results = await Promise.all(references.map(async (reference) => {
-      try { return await this.track(reference, AbortSignal.timeout(8_000)); }
-      catch { return null; }
-    }));
+    const results: Array<Track | null> = [];
+    for (let index = 0; index < references.length; index += 6) {
+      results.push(...await Promise.all(references.slice(index, index + 6).map(async (reference) => {
+        try { return await this.track(reference, AbortSignal.timeout(8_000)); }
+        catch { return null; }
+      })));
+    }
     return results.filter((track): track is Track => track !== null);
   }
 }

@@ -134,6 +134,27 @@ export async function registerMusicSourceRoutes(
       service.home(request.authSession!.response.user.id));
   });
 
+  app.get('/api/library/activity/:kind', async (request, reply) => {
+    const denied = requireAuthentication(request, reply);
+    if (denied) return denied;
+    if (!service) return notConfigured(request, reply);
+    const { kind } = request.params as { kind: string };
+    if (kind !== 'recent' && kind !== 'most-played') {
+      return reply.code(404).send({
+        code: 'ACTIVITY_VIEW_NOT_FOUND',
+        message: 'No encontramos esa vista de actividad.',
+        requestId: request.id,
+      });
+    }
+    const query = request.query as { limit?: string; cursor?: string };
+    return libraryResponse(request, reply, () => service.activityTracks(
+      request.authSession!.response.user.id,
+      kind,
+      parseLimit(query.limit),
+      query.cursor,
+    ));
+  });
+
   app.get('/api/library/albums', async (request, reply) => {
     const denied = requireAuthentication(request, reply);
     if (denied) return denied;
