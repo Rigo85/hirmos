@@ -1,5 +1,6 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import type { ArtistDetail, Track } from '@hirmos/contracts';
@@ -22,7 +23,14 @@ describe('ArtistComponent', () => {
           provide: ActivatedRoute,
           useValue: { paramMap: of(convertToParamMap({ id: 'artist-id' })) },
         },
-        { provide: PlaybackSyncService, useValue: { selectContext } },
+        {
+          provide: PlaybackSyncService,
+          useValue: {
+            selectContext,
+            snapshot: signal({ currentTrackRef: null, status: 'paused' }),
+            toggle: vi.fn(),
+          },
+        },
       ],
     }).compileComponents();
   });
