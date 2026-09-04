@@ -65,6 +65,11 @@ export const routes: Routes = [
           import('./features/activity/activity.component').then((module) => module.ActivityComponent),
       },
       {
+        path: 'habits',
+        loadComponent: () =>
+          import('./features/habits/habits.component').then((module) => module.HabitsComponent),
+      },
+      {
         path: 'albums/:id',
         loadComponent: () =>
           import('./features/album/album.component').then((module) => module.AlbumComponent),

@@ -1,5 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, effect, inject, signal } from '@angular/core';
 import type {
   ClientToServerEvents,
   PlaybackCommandResult,
@@ -10,6 +10,7 @@ import type {
 import { io, type Socket } from 'socket.io-client';
 import { firstValueFrom } from 'rxjs';
 import { AudioPlayerService } from './audio-player.service';
+import { MediaSessionService } from './media-session.service';
 import { SessionStore } from './session.store';
 
 type ControlAction = 'play' | 'pause' | 'next' | 'previous' | 'seek';
@@ -18,16 +19,19 @@ type ControlAction = 'play' | 'pause' | 'next' | 'previous' | 'seek';
 export class PlaybackSyncService {
   private readonly http = inject(HttpClient);
   private readonly player = inject(AudioPlayerService);
+  private readonly mediaSession = inject(MediaSessionService);
   private readonly sessionStore = inject(SessionStore);
   private readonly deviceId = playerInstanceId(this.sessionStore.session()?.user.id);
   private readonly tracks = new Map<string, Track>();
   private readonly socket: Socket<ServerToClientEvents, ClientToServerEvents>;
   private readonly trackLoads = new Map<string, Promise<Track | null>>();
   private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private leaseExpiry: ReturnType<typeof setTimeout> | null = null;
   private reconcileSequence = 0;
 
   readonly snapshot = signal<PlaybackSnapshot | null>(null);
   readonly connected = signal(false);
+  private readonly snapshotFresh = signal(false);
   readonly error = signal<string | null>(null);
   readonly queueTracks = signal<Record<string, Track>>({});
 
@@ -43,13 +47,18 @@ export class PlaybackSyncService {
       },
     });
     this.socket.on('connect', () => {
+      this.snapshotFresh.set(false);
       this.connected.set(true);
       this.error.set(null);
       this.socket.emit('playback:sync', { lastRevision: this.snapshot()?.revision ?? null });
     });
     this.socket.on('disconnect', () => {
       this.connected.set(false);
+      this.snapshotFresh.set(false);
+      if (this.leaseExpiry) clearTimeout(this.leaseExpiry);
+      this.leaseExpiry = null;
       this.player.pause();
+      this.mediaSession.clear();
     });
     this.socket.on('connect_error', (error) => {
       this.error.set(error.message === 'Authentication required'
@@ -69,6 +78,22 @@ export class PlaybackSyncService {
       });
     });
     this.registerMediaSession();
+    effect(() => {
+      const snapshot = this.snapshot();
+      const track = this.player.track();
+      const ownsCurrentTrack = this.connected()
+        && this.snapshotFresh()
+        && this.ownsLease(snapshot)
+        && Boolean(track)
+        && snapshot?.currentTrackRef === track?.id;
+      this.mediaSession.synchronize({
+        active: ownsCurrentTrack,
+        track: ownsCurrentTrack ? track : null,
+        playing: this.player.playing(),
+        positionSeconds: this.player.positionSeconds(),
+        durationSeconds: this.player.durationSeconds() || (track?.durationMs ?? 0) / 1_000,
+      });
+    });
     this.connect();
   }
 
@@ -155,9 +180,12 @@ export class PlaybackSyncService {
   public disconnect(): void {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
+    if (this.leaseExpiry) clearTimeout(this.leaseExpiry);
+    this.leaseExpiry = null;
     this.socket.disconnect();
     this.snapshot.set(null);
     this.player.pause();
+    this.mediaSession.clear();
   }
 
   public ownsLease(snapshot = this.snapshot()): boolean {
@@ -174,6 +202,8 @@ export class PlaybackSyncService {
 
   private receive(snapshot: PlaybackSnapshot): void {
     this.snapshot.set(snapshot);
+    this.snapshotFresh.set(true);
+    this.scheduleLeaseExpiry(snapshot);
     void this.reconcile(snapshot, ++this.reconcileSequence);
     void this.loadQueueTracks(snapshot);
   }
@@ -200,7 +230,10 @@ export class PlaybackSyncService {
     }
     if (snapshot.status === 'playing' && !this.player.requested()) {
       await this.player.resume();
-    } else if (snapshot.status !== 'playing' && this.player.requested()) {
+    } else if (snapshot.status !== 'playing') {
+      // A freshly loaded, already-paused HTMLAudioElement may not emit a pause
+      // event. Apply the durable state explicitly so neither the UI nor Media
+      // Session remains stuck in a synthetic loading phase after a reload.
       this.player.pause();
     }
   }
@@ -308,14 +341,31 @@ export class PlaybackSyncService {
   }
 
   private registerMediaSession(): void {
-    if (!('mediaSession' in navigator)) return;
-    navigator.mediaSession.setActionHandler('play', () => void this.control('play'));
-    navigator.mediaSession.setActionHandler('pause', () => void this.control('pause'));
-    navigator.mediaSession.setActionHandler('nexttrack', () => void this.control('next'));
-    navigator.mediaSession.setActionHandler('previoustrack', () => void this.control('previous'));
-    navigator.mediaSession.setActionHandler('seekto', (details) => {
-      if (typeof details.seekTime === 'number') void this.seek(details.seekTime);
+    this.mediaSession.registerHandlers({
+      play: () => void this.control('play'),
+      pause: () => void this.control('pause'),
+      next: () => void this.control('next'),
+      previous: () => void this.control('previous'),
+      seekTo: (seconds) => void this.seek(seconds),
+      seekBy: (seconds) => {
+        const duration = this.player.durationSeconds();
+        const target = this.player.positionSeconds() + seconds;
+        void this.seek(duration > 0 ? Math.min(duration, Math.max(0, target)) : Math.max(0, target));
+      },
     });
+  }
+
+  private scheduleLeaseExpiry(snapshot: PlaybackSnapshot): void {
+    if (this.leaseExpiry) clearTimeout(this.leaseExpiry);
+    this.leaseExpiry = null;
+    if (snapshot.activeDeviceId !== this.deviceId || !snapshot.leaseExpiresAt) return;
+    const delay = Math.max(0, Date.parse(snapshot.leaseExpiresAt) - Date.now()) + 50;
+    this.leaseExpiry = setTimeout(() => {
+      this.leaseExpiry = null;
+      if (this.ownsLease()) return;
+      this.player.pause();
+      this.mediaSession.clear();
+    }, delay);
   }
 }
 

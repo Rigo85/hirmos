@@ -23,6 +23,9 @@
     "db:migrate": "npm run db:migrate -w @hirmos/api",
     "auth:bootstrap-admin": "npm run auth:bootstrap-admin -w @hirmos/api",
     "source:configure": "node scripts/configure-source.mjs",
+    "history:import": "node scripts/import-listen-history.mjs",
+    "catalog:warm-habits": "node scripts/warm-habits-catalog.mjs",
+    "catalog:link-artists": "node scripts/link-artist-identities.mjs",
     "smoke:auth": "node scripts/smoke-auth-flow.mjs",
     "smoke:playback": "node scripts/smoke-playback.mjs"
   },

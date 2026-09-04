@@ -17,6 +17,7 @@ import { PlaybackRepository } from './playback/playback-repository.js';
 import { PlaybackService } from './playback/playback-service.js';
 import { SessionRevocationNotifier } from './auth/session-revocation.js';
 import { ActivityRepository } from './activity/activity-repository.js';
+import { CatalogRepository } from './activity/catalog-repository.js';
 import { LyricsRepository } from './lyrics/lyrics-repository.js';
 import { LrclibLyricsProvider } from './lyrics/lrclib-lyrics-provider.js';
 
@@ -47,6 +48,7 @@ const musicSourceService = database && config.DATA_ENCRYPTION_KEY
       activityRepository,
       new LyricsRepository(database),
       new LrclibLyricsProvider(),
+      new CatalogRepository(database),
     )
   : undefined;
 const playbackService = database

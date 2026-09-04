@@ -165,9 +165,45 @@ export const searchResponseSchema = z.object({
 });
 export type SearchResponse = z.infer<typeof searchResponseSchema>;
 
+export const habitPeriodSchema = z.enum(['7d', '30d', '12m', 'all']);
+export type HabitPeriod = z.infer<typeof habitPeriodSchema>;
+export const habitKindSchema = z.enum(['artists', 'albums', 'tracks']);
+export type HabitKind = z.infer<typeof habitKindSchema>;
+
+const habitMetricsSchema = z.object({
+  listenedMs: z.number().int().nonnegative(),
+  playStarts: z.number().int().nonnegative(),
+  qualifiedPlays: z.number().int().nonnegative(),
+  importedPlays: z.number().int().nonnegative(),
+  completions: z.number().int().nonnegative(),
+  skips: z.number().int().nonnegative(),
+  trackCount: z.number().int().nonnegative(),
+  lastPlayedAt: z.iso.datetime().nullable(),
+  estimated: z.boolean(),
+});
+
+export const habitArtistSchema = artistSchema.extend(habitMetricsSchema.shape);
+export type HabitArtist = z.infer<typeof habitArtistSchema>;
+export const habitAlbumSchema = albumSchema.extend(habitMetricsSchema.shape);
+export type HabitAlbum = z.infer<typeof habitAlbumSchema>;
+export const habitTrackSchema = trackSchema.extend(habitMetricsSchema.shape);
+export type HabitTrack = z.infer<typeof habitTrackSchema>;
+
+export const habitsResponseSchema = z.object({
+  kind: habitKindSchema,
+  period: habitPeriodSchema,
+  dataSince: z.iso.datetime().nullable(),
+  artists: z.array(habitArtistSchema),
+  albums: z.array(habitAlbumSchema),
+  tracks: z.array(habitTrackSchema),
+  nextCursor: z.string().nullable(),
+});
+export type HabitsResponse = z.infer<typeof habitsResponseSchema>;
+
 export const libraryHomeResponseSchema = z.object({
   recentlyPlayed: z.array(trackSchema),
-  mostPlayed: z.array(trackSchema),
+  topArtists: z.array(habitArtistSchema),
+  habitsSince: z.iso.datetime().nullable(),
   recentlyAdded: z.array(albumSchema),
   rediscover: z.array(albumSchema),
 });

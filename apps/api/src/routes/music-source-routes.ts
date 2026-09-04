@@ -155,6 +155,29 @@ export async function registerMusicSourceRoutes(
     ));
   });
 
+  app.get('/api/library/habits', async (request, reply) => {
+    const denied = requireAuthentication(request, reply);
+    if (denied) return denied;
+    if (!service) return notConfigured(request, reply);
+    const query = request.query as {
+      kind?: string;
+      period?: string;
+      limit?: string;
+      cursor?: string;
+    };
+    const kinds = ['artists', 'albums', 'tracks'] as const;
+    const periods = ['7d', '30d', '12m', 'all'] as const;
+    const kind = kinds.find((value) => value === query.kind) ?? 'artists';
+    const period = periods.find((value) => value === query.period) ?? '30d';
+    return libraryResponse(request, reply, () => service.habits(
+      request.authSession!.response.user.id,
+      kind,
+      period,
+      parseLimit(query.limit),
+      query.cursor,
+    ));
+  });
+
   app.get('/api/library/albums', async (request, reply) => {
     const denied = requireAuthentication(request, reply);
     if (denied) return denied;

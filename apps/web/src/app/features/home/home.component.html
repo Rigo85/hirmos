@@ -28,17 +28,25 @@
         <ol #recentCarousel class="track-carousel" aria-label="Escuchado recientemente">@for (track of home.recentlyPlayed; track track.id) { <li appTrackRow [track]="track" [showCover]="true" (playTrack)="play(track)"></li> }</ol>
       </section>
     }
-    @if (home.mostPlayed.length) {
+    @if (home.topArtists.length) {
       <section class="music-section home-activity-section">
         <div class="section-heading">
-          <div><p class="eyebrow">TUS HÁBITOS</p><h2>Lo que más escuchas</h2></div>
+          <div><p class="eyebrow">TUS HÁBITOS · ÚLTIMOS 30 DÍAS</p><h2>Tus artistas</h2></div>
           <div class="section-actions">
-            <button class="carousel-button" type="button" aria-label="Ver anteriores más escuchadas" (click)="scrollCarousel(mostPlayedCarousel, -1)"><app-icon name="arrow-left" /></button>
-            <button class="carousel-button" type="button" aria-label="Ver siguientes más escuchadas" (click)="scrollCarousel(mostPlayedCarousel, 1)"><app-icon name="arrow-right" /></button>
-            <a routerLink="/activity/most-played">Ver todos</a>
+            <button class="carousel-button" type="button" aria-label="Ver artistas anteriores" (click)="scrollCarousel(habitCarousel, -1)"><app-icon name="arrow-left" /></button>
+            <button class="carousel-button" type="button" aria-label="Ver artistas siguientes" (click)="scrollCarousel(habitCarousel, 1)"><app-icon name="arrow-right" /></button>
+            <a routerLink="/habits">Ver hábitos</a>
           </div>
         </div>
-        <ol #mostPlayedCarousel class="track-carousel" aria-label="Lo que más escuchas">@for (track of home.mostPlayed; track track.id) { <li appTrackRow [track]="track" [showCover]="true" [showDuration]="false" (playTrack)="play(track)"></li> }</ol>
+        <div #habitCarousel class="habit-carousel" aria-label="Tus artistas de los últimos 30 días">
+          @for (artist of home.topArtists; track artist.id) {
+            <a class="habit-artist-card" [routerLink]="['/artists', artist.id]">
+              @if (artist.coverUrl) { <img loading="lazy" decoding="async" [src]="artist.coverUrl" [alt]="artist.name"> }
+              @else { <span>{{ artist.name.slice(0, 2).toUpperCase() }}</span> }
+              <div><strong>{{ artist.name }}</strong><small>{{ habitMetric(artist) }}</small><em>{{ artist.trackCount }} {{ artist.trackCount === 1 ? 'canción' : 'canciones' }}</em></div>
+            </a>
+          }
+        </div>
       </section>
     }
     <section class="music-section"><div class="section-heading"><div><p class="eyebrow">RECIÉN LLEGADOS</p><h2>Añadido recientemente</h2></div><a routerLink="/library">Ver biblioteca</a></div><div class="album-grid album-grid--five">@for (album of home.recentlyAdded; track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img loading="lazy" decoding="async" [src]="album.coverUrl" [alt]="'Carátula de ' + album.name"> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small><em>{{ album.year || '—' }} · {{ album.songCount }} canciones</em></a> }</div></section>

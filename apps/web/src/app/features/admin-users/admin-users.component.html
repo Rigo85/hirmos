@@ -4,11 +4,14 @@
     <p class="eyebrow">ADMINISTRACIÓN</p><h1>Invitar oyentes</h1><p class="muted">Cada persona tendrá una cuenta, cola y sesiones propias.</p>
     <article class="source-card">
       <div class="source-card__status"><span class="source-icon">＋</span><div><strong>Nueva invitación</strong><small>El enlace será válido durante 48 horas y solo podrá usarse una vez.</small></div></div>
-      <form class="source-form" [formGroup]="form" (ngSubmit)="submit()">
-        <label for="invite-email">Correo</label><input id="invite-email" type="email" formControlName="email" autocomplete="email">
-        <label for="invite-role">Rol</label><select id="invite-role" formControlName="role"><option value="user">Oyente</option><option value="admin">Administrador</option></select>
+      <form class="source-form invite-form" [formGroup]="form" (ngSubmit)="submit()">
+        <div class="invite-form__row">
+          <div class="invite-form__field"><label for="invite-email">Correo</label><input id="invite-email" type="email" formControlName="email" autocomplete="email" placeholder="oyente@ejemplo.com" [attr.aria-invalid]="form.controls.email.touched && form.controls.email.invalid"></div>
+          <div class="invite-form__field"><label for="invite-role">Rol</label><select id="invite-role" formControlName="role"><option value="user">Oyente</option><option value="admin">Administrador</option></select></div>
+          <button class="primary-button primary-button--compact invite-form__submit" type="submit" [disabled]="submitting()">{{ submitting() ? 'Creando…' : 'Enviar invitación' }}</button>
+        </div>
+        @if (form.controls.email.touched && form.controls.email.invalid) { <p class="field-error invite-form__feedback" role="alert">Ingresa un correo válido.</p> }
         @if (message()) { <p [class]="message()!.kind === 'success' ? 'success-message' : 'form-error'" role="status">{{ message()!.text }}</p> }
-        <div class="form-actions"><button class="primary-button primary-button--compact" type="submit" [disabled]="submitting()">{{ submitting() ? 'Creando…' : 'Enviar invitación' }}</button></div>
       </form>
     </article>
   </section>

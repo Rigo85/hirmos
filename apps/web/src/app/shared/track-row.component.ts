@@ -38,7 +38,8 @@ import { AppIconComponent } from './app-icon.component';
         }
       </div>
     </div>
-    @if (showDuration()) { <time>{{ track().durationMs / 60000 | number:'1.0-0' }} min</time> }
+    @if (trailingText()) { <time>{{ trailingText() }}</time> }
+    @else if (showDuration()) { <time>{{ track().durationMs / 60000 | number:'1.0-0' }} min</time> }
   `,
 })
 export class TrackRowComponent {
@@ -47,6 +48,7 @@ export class TrackRowComponent {
   public readonly position = input<number | null>(null);
   public readonly showCover = input(false);
   public readonly showDuration = input(true);
+  public readonly trailingText = input<string | null>(null);
   public readonly playTrack = output<Track>();
 
   protected readonly isCurrent = computed(() =>

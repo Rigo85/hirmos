@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import type { LibraryHomeResponse, Track } from '@hirmos/contracts';
+import type { HabitArtist, LibraryHomeResponse, Track } from '@hirmos/contracts';
 import { firstValueFrom } from 'rxjs';
 import { AudioPlayerService } from '../../core/audio-player.service';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
@@ -40,5 +40,21 @@ export class HomeComponent {
       left: direction * Math.max(280, list.clientWidth * 0.8),
       behavior: 'smooth',
     });
+  }
+
+  protected listeningTime(milliseconds: number): string {
+    const minutes = Math.max(1, Math.round(milliseconds / 60_000));
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    const remainder = minutes % 60;
+    return remainder ? `${hours} h ${remainder} min` : `${hours} h`;
+  }
+
+  protected habitMetric(artist: HabitArtist): string {
+    const listening = artist.listenedMs > 0 ? this.listeningTime(artist.listenedMs) : null;
+    const plays = artist.qualifiedPlays > 0
+      ? `${artist.qualifiedPlays} ${artist.qualifiedPlays === 1 ? 'escucha' : 'escuchas'}`
+      : null;
+    return [plays, listening].filter(Boolean).join(' · ') || `${artist.playStarts} inicios`;
   }
 }

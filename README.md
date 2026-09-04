@@ -18,6 +18,8 @@ una invitación.
 - API Fastify y coordinación en tiempo real mediante Socket.IO.
 - Autenticación propia multiusuario con invitaciones y recuperación.
 - Cola, posición, dispositivo activo y actividad guardados en PostgreSQL.
+- Hábitos por artista, álbum y canción con períodos de 7 días, 30 días, 12
+  meses o todo el historial disponible.
 - Adaptador genérico de fuentes musicales, actualmente implementado para
   Navidrome/OpenSubsonic.
 - Streaming con rangos, carátulas, metadatos enriquecidos y letras con proveedor
@@ -68,6 +70,30 @@ npm run test:e2e
 
 Los archivos de este repositorio no incluyen credenciales, inventario de
 infraestructura ni configuración real de producción.
+
+## Importación de historial
+
+Hirmos puede incorporar escuchas anteriores sin depender en tiempo de ejecución
+de una API privada del servidor musical. El archivo de entrada es JSON Lines y
+cada línea contiene `externalEventId`, `remoteTrackId` y `occurredAt`. La
+operación exige asociar explícitamente el archivo con un usuario Hirmos, una
+fuente y un proveedor; es transaccional e idempotente.
+
+```bash
+DATABASE_URL=postgres://hirmos_app:example@127.0.0.1:5432/hirmos \
+HIRMOS_HISTORY_USER_EMAIL=listener@example.test \
+HIRMOS_HISTORY_PROVIDER=example-export \
+HIRMOS_HISTORY_FILE=/secure/path/history.jsonl \
+npm run history:import
+```
+
+Los alias confirmados de un artista pueden agruparse sin alterar los metadatos
+del servidor original mediante `npm run catalog:link-artists`. No se realiza
+unión automática sólo por semejanza textual.
+
+MusicBrainz es una fuente opcional de identificadores públicos: consultar su
+API no exige una cuenta y Hirmos no depende de ella para calcular hábitos. Las
+uniones dudosas siempre requieren confirmación explícita.
 
 ## Licencia
 

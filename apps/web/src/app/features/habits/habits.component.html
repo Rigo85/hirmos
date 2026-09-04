@@ -1,0 +1,69 @@
+<div class="content-frame habits-page">
+  <header class="activity-page__header">
+    <p class="eyebrow">TU ACTIVIDAD, CON CONTEXTO</p>
+    <h1>Tus hábitos</h1>
+    <p class="muted">Explora lo que realmente has escuchado por artista, álbum o canción.</p>
+    @if (sinceLabel(); as since) { <p class="habits-since">Hirmos registra tu actividad desde el {{ since }}.</p> }
+  </header>
+
+  <div class="habits-controls">
+    <nav class="library-tabs habits-tabs" aria-label="Agrupar hábitos por">
+      <button type="button" [class.active]="kind() === 'artists'" (click)="selectKind('artists')">Artistas</button>
+      <button type="button" [class.active]="kind() === 'albums'" (click)="selectKind('albums')">Álbumes</button>
+      <button type="button" [class.active]="kind() === 'tracks'" (click)="selectKind('tracks')">Canciones</button>
+    </nav>
+    <div class="period-switch" aria-label="Período de los hábitos">
+      <button type="button" [class.active]="period() === '7d'" (click)="selectPeriod('7d')">7 días</button>
+      <button type="button" [class.active]="period() === '30d'" (click)="selectPeriod('30d')">30 días</button>
+      <button type="button" [class.active]="period() === '12m'" (click)="selectPeriod('12m')">12 meses</button>
+      <button type="button" [class.active]="period() === 'all'" (click)="selectPeriod('all')">Todo</button>
+    </div>
+  </div>
+
+  @if (hasEstimatedData()) {
+    <p class="habits-note">Una parte de la actividad inicial fue reconstruida desde el agregado anterior; las nuevas escuchas ya se registran por día.</p>
+  }
+  @if (hasImportedData()) {
+    <p class="habits-note">Este período incluye escuchas importadas. Conservamos su cantidad y fecha originales; no inventamos minutos de reproducción.</p>
+  }
+  @if (error()) { <p class="form-error" role="alert">{{ error() }}</p> }
+  @if (!loading() && !hasResults() && !error()) {
+    <section class="empty-state"><span>♫</span><h2>Aún estamos aprendiendo</h2><p>No hay escuchas en este período.</p></section>
+  }
+
+  @if (kind() === 'artists' && artists().length) {
+    <div class="habit-grid">
+      @for (artist of artists(); track artist.id) {
+        <a class="habit-detail-card habit-detail-card--artist" [routerLink]="['/artists', artist.id]">
+          @if (artist.coverUrl) { <img loading="lazy" decoding="async" [src]="artist.coverUrl" [alt]="artist.name"> }
+          @else { <span>{{ artist.name.slice(0, 2).toUpperCase() }}</span> }
+          <div><strong>{{ artist.name }}</strong><small>{{ metric(artist) }}</small><em>{{ artist.trackCount }} {{ artist.trackCount === 1 ? 'canción distinta' : 'canciones distintas' }}</em></div>
+        </a>
+      }
+    </div>
+  }
+
+  @if (kind() === 'albums' && albums().length) {
+    <div class="habit-grid">
+      @for (album of albums(); track album.id || album.name) {
+        @if (album.id) {
+          <a class="habit-detail-card" [routerLink]="['/albums', album.id]">
+            <span class="habit-detail-cover">@if (album.coverUrl) { <img loading="lazy" decoding="async" [src]="album.coverUrl" [alt]="album.name"> } @else { <b>{{ album.name.slice(0, 2).toUpperCase() }}</b> }</span>
+            <div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small><em>{{ metric(album) }}</em></div>
+          </a>
+        }
+      }
+    </div>
+  }
+
+  @if (kind() === 'tracks' && tracks().length) {
+    <ol class="track-results activity-results">
+      @for (track of tracks(); track track.id; let index = $index) {
+        <li appTrackRow [track]="track" [position]="index + 1" [trailingText]="metric(track)" (playTrack)="play(track)"></li>
+      }
+    </ol>
+  }
+
+  @if (loading()) { <div class="page-loading page-loading--compact"><span></span><p>Calculando hábitos…</p></div> }
+  @if (nextCursor() && !loading()) { <div class="load-more"><button class="outline-button" type="button" (click)="loadMore()">Cargar más</button></div> }
+</div>

@@ -72,9 +72,9 @@ export class PlayerShellComponent {
     } catch { this.lyricsError.set('No pudimos cargar la letra.'); }
   }
 
-  protected openQueue(): void {
+  protected toggleQueue(): void {
     this.lyricsOpen.set(false);
-    this.queueOpen.set(true);
+    this.queueOpen.update((open) => !open);
   }
 
   protected seekTo(event: Event): void {

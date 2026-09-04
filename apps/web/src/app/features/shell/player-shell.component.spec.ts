@@ -1,5 +1,6 @@
 import { provideHttpClient } from '@angular/common/http';
-import { signal } from '@angular/core';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { signal, type WritableSignal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { AudioPlayerService } from '../../core/audio-player.service';
@@ -13,7 +14,7 @@ describe('PlayerShellComponent', () => {
     await TestBed.configureTestingModule({
       imports: [PlayerShellComponent],
       providers: [
-        provideHttpClient(),
+        provideHttpClient(), provideHttpClientTesting(),
         provideRouter([]),
         {
           provide: SessionStore,
@@ -59,5 +60,57 @@ describe('PlayerShellComponent', () => {
     expect(toggle.getAttribute('aria-label')).toBe('Expandir menú lateral');
     expect(localStorage.getItem('hirmos.sidebar.collapsed')).toBe('true');
     expect(fixture.nativeElement.querySelector('.nav-link').getAttribute('title')).toBe('Inicio');
+  });
+
+  it('toggles the queue from the player bar and exposes its pressed state', () => {
+    const fixture = TestBed.createComponent(PlayerShellComponent);
+    fixture.detectChanges();
+    const panel = fixture.nativeElement.querySelector('.queue-panel') as HTMLElement;
+    let toggle = fixture.nativeElement.querySelector(
+      '.player-actions [aria-label="Mostrar cola"]',
+    ) as HTMLButtonElement;
+
+    toggle.click();
+    fixture.detectChanges();
+
+    expect(panel.classList).toContain('queue-panel--open');
+    toggle = fixture.nativeElement.querySelector(
+      '.player-actions [aria-label="Cerrar cola"]',
+    ) as HTMLButtonElement;
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    toggle.click();
+    fixture.detectChanges();
+
+    expect(panel.classList).not.toContain('queue-panel--open');
+    expect(fixture.nativeElement.querySelector('.player-actions [aria-label="Mostrar cola"]')
+      .getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('toggles lyrics from the player bar after loading them', async () => {
+    const player = TestBed.inject(AudioPlayerService) as unknown as {
+      track: WritableSignal<{ id: string; title: string; coverUrl: null }>;
+    };
+    player.track.set({ id: 'track-a', title: 'Song', coverUrl: null });
+    const fixture = TestBed.createComponent(PlayerShellComponent);
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const panel = fixture.nativeElement.querySelector('.lyrics-panel') as HTMLElement;
+
+    (fixture.nativeElement.querySelector(
+      '.player-actions [aria-label="Mostrar letra"]',
+    ) as HTMLButtonElement).click();
+    http.expectOne('/api/music/tracks/track-a/lyrics').flush({ lyrics: [] });
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(panel.classList).toContain('lyrics-panel--open');
+    const toggle = fixture.nativeElement.querySelector(
+      '.player-actions [aria-label="Cerrar letra"]',
+    ) as HTMLButtonElement;
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    toggle.click();
+    fixture.detectChanges();
+
+    expect(panel.classList).not.toContain('lyrics-panel--open');
   });
 });
