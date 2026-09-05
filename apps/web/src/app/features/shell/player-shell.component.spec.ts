@@ -7,6 +7,7 @@ import { AudioPlayerService } from '../../core/audio-player.service';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { SessionStore } from '../../core/session.store';
 import { PlayerShellComponent } from './player-shell.component';
+import { FavoritesService } from '../../core/favorites.service';
 
 describe('PlayerShellComponent', () => {
   beforeEach(async () => {
@@ -39,6 +40,13 @@ describe('PlayerShellComponent', () => {
             hasActiveRemotePlayer: () => false, previous: vi.fn(), next: vi.fn(), toggle: vi.fn(),
             seek: vi.fn(), removeQueueItem: vi.fn(), claimHere: vi.fn(),
             currentPositionSeconds: () => 0,
+          },
+        },
+        {
+          provide: FavoritesService,
+          useValue: {
+            error: signal(null), isFavorite: () => false, isPending: () => false,
+            toggle: vi.fn(),
           },
         },
       ],

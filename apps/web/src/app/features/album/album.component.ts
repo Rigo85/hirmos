@@ -27,6 +27,16 @@ export class AlbumComponent {
     if (!album) return;
     void this.playback.selectContext(album.tracks, album.tracks.findIndex((item) => item.id === track.id), 'album', album.id);
   }
+  protected shuffle(): void {
+    const album = this.album();
+    if (!album?.tracks.length) return;
+    const tracks = [...album.tracks];
+    for (let index = tracks.length - 1; index > 0; index--) {
+      const replacement = Math.floor(Math.random() * (index + 1));
+      [tracks[index], tracks[replacement]] = [tracks[replacement]!, tracks[index]!];
+    }
+    void this.playback.selectContext(tracks, 0, 'album', album.id);
+  }
   private async load(id: string): Promise<void> {
     this.album.set(null); this.error.set(null);
     try { this.album.set(await firstValueFrom(this.http.get<AlbumDetail>(`/api/library/albums/${encodeURIComponent(id)}`))); }

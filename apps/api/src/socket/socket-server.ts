@@ -31,7 +31,7 @@ const selectSchema = commandBase.extend({ trackRef: z.string().min(1).max(2048) 
 const selectContextSchema = commandBase.extend({
   trackRefs: z.array(z.string().min(1).max(2048)).min(1).max(500),
   selectedIndex: z.number().int().nonnegative(),
-  contextType: z.enum(['album', 'artist', 'search', 'home', 'genre']),
+  contextType: z.enum(['album', 'artist', 'search', 'home', 'genre', 'favorites']),
   contextRef: z.string().max(2048).nullable(),
 }).refine((value) => value.selectedIndex < value.trackRefs.length, {
   message: 'selectedIndex must reference a track',

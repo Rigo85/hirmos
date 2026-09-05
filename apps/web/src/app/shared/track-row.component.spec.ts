@@ -6,6 +6,7 @@ import type { Track } from '@hirmos/contracts';
 import { PlaybackSyncService } from '../core/playback-sync.service';
 import { AppIconComponent } from './app-icon.component';
 import { TrackRowComponent } from './track-row.component';
+import { FavoritesService } from '../core/favorites.service';
 
 describe('TrackRowComponent', () => {
   const snapshot = signal<{ currentTrackRef: string | null; status: 'playing' | 'paused' }>({
@@ -13,15 +14,25 @@ describe('TrackRowComponent', () => {
     status: 'paused',
   });
   const toggle = vi.fn();
+  const favorite = signal(false);
+  const toggleFavorite = vi.fn(async () => {
+    favorite.update((value) => !value);
+    return favorite();
+  });
 
   beforeEach(async () => {
     snapshot.set({ currentTrackRef: null, status: 'paused' });
     toggle.mockReset();
+    favorite.set(false);
+    toggleFavorite.mockClear();
     await TestBed.configureTestingModule({
       imports: [TrackRowComponent],
       providers: [
         provideRouter([]),
         { provide: PlaybackSyncService, useValue: { snapshot, toggle } },
+        { provide: FavoritesService, useValue: {
+          isFavorite: () => favorite(), isPending: () => false, toggle: toggleFavorite,
+        } },
       ],
     }).compileComponents();
   });
@@ -86,6 +97,26 @@ describe('TrackRowComponent', () => {
       .toBe('Reproducir Canción');
     expect(fixture.debugElement.query(By.directive(AppIconComponent)).componentInstance.name())
       .toBe('play');
+  });
+
+  it('marks a track as favorite without starting playback', async () => {
+    const fixture = TestBed.createComponent(TrackRowComponent);
+    fixture.componentRef.setInput('track', track());
+    const played = vi.fn();
+    const changed = vi.fn();
+    fixture.componentInstance.playTrack.subscribe(played);
+    fixture.componentInstance.favoriteChange.subscribe(changed);
+    fixture.detectChanges();
+
+    const button = fixture.nativeElement.querySelector('.track-row__favorite') as HTMLButtonElement;
+    expect(button.getAttribute('aria-pressed')).toBe('false');
+    button.click();
+    await fixture.whenStable(); fixture.detectChanges();
+
+    expect(toggleFavorite).toHaveBeenCalledWith(expect.objectContaining({ id: 'track-id' }));
+    expect(changed).toHaveBeenCalledWith(true);
+    expect(played).not.toHaveBeenCalled();
+    expect(button.getAttribute('aria-pressed')).toBe('true');
   });
 });
 

@@ -242,6 +242,14 @@ export const trackListResponseSchema = z.object({
 });
 export type TrackListResponse = z.infer<typeof trackListResponseSchema>;
 
+export const favoriteTrackRequestSchema = z.object({ favorite: z.boolean() });
+export type FavoriteTrackRequest = z.infer<typeof favoriteTrackRequestSchema>;
+export const favoriteTrackResponseSchema = z.object({
+  reference: z.string(),
+  favorite: z.boolean(),
+});
+export type FavoriteTrackResponse = z.infer<typeof favoriteTrackResponseSchema>;
+
 export const genreListResponseSchema = z.object({ genres: z.array(genreSchema) });
 export type GenreListResponse = z.infer<typeof genreListResponseSchema>;
 
@@ -331,7 +339,7 @@ export interface ClientToServerEvents {
     expectedRevision: number;
     trackRefs: string[];
     selectedIndex: number;
-    contextType: 'album' | 'artist' | 'search' | 'home' | 'genre';
+    contextType: 'album' | 'artist' | 'search' | 'home' | 'genre' | 'favorites';
     contextRef: string | null;
   }, ack?: PlaybackCommandAck) => void;
   'playback:update': (command: {

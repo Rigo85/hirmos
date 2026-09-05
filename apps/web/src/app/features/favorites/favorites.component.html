@@ -1,0 +1,23 @@
+<div class="content-frame activity-page favorites-page">
+  <header class="activity-page__header">
+    <p class="eyebrow">TU COLECCIÓN</p>
+    <h1>Favoritos</h1>
+    <p class="muted">Las canciones que quieres tener siempre a mano.</p>
+    @if (tracks().length) {
+      <div class="genre-actions">
+        <button class="primary-button primary-button--compact play-album-button" type="button" (click)="playAll()" [disabled]="preparingPlayback()"><app-icon name="play" /> {{ preparingPlayback() ? 'Preparando…' : 'Reproducir todo' }}</button>
+        <button class="outline-button play-album-button" type="button" (click)="shuffle()" [disabled]="preparingPlayback()"><app-icon name="shuffle" /> Aleatorio</button>
+      </div>
+    }
+  </header>
+
+  @if (error()) { <p class="form-error" role="alert">{{ error() }}</p> }
+  @if (!loading() && !tracks().length && !error()) {
+    <section class="empty-state"><app-icon name="heart" /><h2>Aún no tienes favoritos</h2><p>Usa el corazón junto a cualquier canción para guardarla aquí.</p></section>
+  }
+  @if (tracks().length) {
+    <ol class="track-results activity-results">@for (track of tracks(); track track.id; let index = $index) { <li appTrackRow [track]="track" [position]="index + 1" [showCover]="true" (playTrack)="play(track)" (favoriteChange)="removeIfUnfavorited(track, $event)"></li> }</ol>
+  }
+  @if (loading()) { <div class="page-loading page-loading--compact"><span></span><p>Cargando favoritos…</p></div> }
+  @if (nextCursor() && !loading()) { <div class="load-more"><button class="outline-button" type="button" (click)="loadMore()">Cargar más</button></div> }
+</div>

@@ -71,7 +71,7 @@ export class PlaybackService {
     expectedRevision: number;
     trackRefs: string[];
     selectedIndex: number;
-    contextType: 'album' | 'artist' | 'search' | 'home' | 'genre';
+    contextType: 'album' | 'artist' | 'search' | 'home' | 'genre' | 'favorites';
     contextRef: string | null;
   }): Promise<PlaybackCommandResult> {
     const references = input.trackRefs.map(decodeTrackReference);

@@ -5,6 +5,7 @@ import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { SessionStore } from '../../core/session.store';
 import { AppIconComponent } from '../../shared/app-icon.component';
 import { LyricsPanelComponent } from '../lyrics/lyrics-panel.component';
+import { FavoritesService } from '../../core/favorites.service';
 
 @Component({
   selector: 'app-player-shell',
@@ -17,6 +18,7 @@ export class PlayerShellComponent {
   protected readonly sessionStore = inject(SessionStore);
   protected readonly player = inject(AudioPlayerService);
   protected readonly playback = inject(PlaybackSyncService);
+  protected readonly favorites = inject(FavoritesService);
   protected readonly sidebarCollapsed = signal(readSidebarPreference(this.sidebarPreferenceKey));
   protected readonly mobileMenuOpen = signal(false);
   protected readonly queueOpen = signal(false);

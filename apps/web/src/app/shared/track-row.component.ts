@@ -3,6 +3,7 @@ import { Component, computed, inject, input, output } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import type { Track } from '@hirmos/contracts';
 import { PlaybackSyncService } from '../core/playback-sync.service';
+import { FavoritesService } from '../core/favorites.service';
 import { AppIconComponent } from './app-icon.component';
 
 @Component({
@@ -38,18 +39,23 @@ import { AppIconComponent } from './app-icon.component';
         }
       </div>
     </div>
-    @if (trailingText()) { <time>{{ trailingText() }}</time> }
-    @else if (showDuration()) { <time>{{ track().durationMs / 60000 | number:'1.0-0' }} min</time> }
+    <div class="track-row__trailing">
+      @if (trailingText()) { <time>{{ trailingText() }}</time> }
+      @else if (showDuration()) { <time>{{ track().durationMs / 60000 | number:'1.0-0' }} min</time> }
+      <button class="track-row__favorite" [class.track-row__favorite--active]="isFavorite()" type="button" (click)="toggleFavorite()" [disabled]="favorites.isPending(track().id)" [attr.aria-label]="isFavorite() ? 'Quitar ' + track().title + ' de favoritos' : 'Añadir ' + track().title + ' a favoritos'" [attr.aria-pressed]="isFavorite()"><app-icon [name]="isFavorite() ? 'heart-filled' : 'heart'" /></button>
+    </div>
   `,
 })
 export class TrackRowComponent {
   private readonly playback = inject(PlaybackSyncService);
+  protected readonly favorites = inject(FavoritesService);
   public readonly track = input.required<Track>();
   public readonly position = input<number | null>(null);
   public readonly showCover = input(false);
   public readonly showDuration = input(true);
   public readonly trailingText = input<string | null>(null);
   public readonly playTrack = output<Track>();
+  public readonly favoriteChange = output<boolean>();
 
   protected readonly isCurrent = computed(() =>
     this.playback.snapshot()?.currentTrackRef === this.track().id,
@@ -60,6 +66,7 @@ export class TrackRowComponent {
   protected readonly actionLabel = computed(() =>
     `${this.isPlaying() ? 'Pausar' : 'Reproducir'} ${this.track().title}`,
   );
+  protected readonly isFavorite = computed(() => this.favorites.isFavorite(this.track()));
 
   protected activate(): void {
     if (this.isCurrent()) {
@@ -67,5 +74,10 @@ export class TrackRowComponent {
       return;
     }
     this.playTrack.emit(this.track());
+  }
+
+  protected async toggleFavorite(): Promise<void> {
+    const favorite = await this.favorites.toggle(this.track());
+    if (favorite !== null) this.favoriteChange.emit(favorite);
   }
 }

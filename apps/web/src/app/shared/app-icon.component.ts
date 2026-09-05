@@ -6,6 +6,8 @@ export type AppIconName =
   | 'close'
   | 'device'
   | 'home'
+  | 'heart'
+  | 'heart-filled'
   | 'library'
   | 'lyrics'
   | 'menu'
@@ -36,6 +38,12 @@ export type AppIconName =
         @case ('home') {
           <path d="M3.5 10.7 12 3.8l8.5 6.9" />
           <path d="M5.6 9.6v10.1h12.8V9.6M9.4 19.7v-6.1h5.2v6.1" />
+        }
+        @case ('heart') {
+          <path d="M12 20.3 4.2 13A5.1 5.1 0 0 1 11.4 5.8L12 6.4l.6-.6A5.1 5.1 0 0 1 19.8 13z" />
+        }
+        @case ('heart-filled') {
+          <path class="icon-fill" d="M12 20.3 4.2 13A5.1 5.1 0 0 1 11.4 5.8L12 6.4l.6-.6A5.1 5.1 0 0 1 19.8 13z" />
         }
         @case ('library') {
           <rect x="3.7" y="4" width="4.2" height="16" rx="1" />

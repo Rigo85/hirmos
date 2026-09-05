@@ -18,6 +18,7 @@ import type { LyricsRepository } from '../lyrics/lyrics-repository.js';
 import type { LyricsProvider } from '../lyrics/lyrics-provider.js';
 import { createHash } from 'node:crypto';
 import type { ArtistTagService } from '../metadata/artist-tag-service.js';
+import { trackKey, type FavoriteRepository } from '../favorites/favorite-repository.js';
 
 export class MusicSourceUnavailableError extends Error {}
 
@@ -35,6 +36,7 @@ export class MusicSourceService {
     private readonly lyricsProviders: readonly LyricsProvider[] = [],
     private readonly catalog?: CatalogRepository,
     private readonly artistTags?: ArtistTagService,
+    private readonly favorites?: FavoriteRepository,
   ) {}
 
   public async currentForAdmin(): Promise<AdminMusicSource | null> {
@@ -75,21 +77,29 @@ export class MusicSourceService {
     return adapter.probe(AbortSignal.timeout(10_000));
   }
 
-  public async search(query: string, cursor?: string): Promise<SearchResponse> {
+  public async search(userId: string, query: string, cursor?: string): Promise<SearchResponse> {
     const source = await this.requireCurrent();
     const result = await this.adapterFor(source).search(query, cursor, AbortSignal.timeout(10_000));
     return {
       artists: result.artists.map((artist) => publicArtist(source.id, artist)),
       albums: result.albums.map((album) => publicAlbum(source.id, album)),
-      tracks: result.tracks.map((track) => publicTrack(source.id, track)),
+      tracks: await this.personalizeTracks(
+        userId, result.tracks.map((track) => publicTrack(source.id, track)),
+      ),
       nextCursor: result.nextCursor,
     };
   }
 
-  public async discover(limit = 20): Promise<SearchResponse> {
+  public async discover(userId: string, limit = 20): Promise<SearchResponse> {
     const source = await this.requireCurrent();
     const tracks = await this.adapterFor(source).discover(limit, AbortSignal.timeout(10_000));
-    return { artists: [], albums: [], tracks: tracks.map((track) => publicTrack(source.id, track)), nextCursor: null };
+    return {
+      artists: [], albums: [],
+      tracks: await this.personalizeTracks(
+        userId, tracks.map((track) => publicTrack(source.id, track)),
+      ),
+      nextCursor: null,
+    };
   }
 
   public async home(userId: string): Promise<LibraryHomeResponse> {
@@ -101,7 +111,7 @@ export class MusicSourceService {
       adapter.listAlbums('newest', 10, 0, AbortSignal.timeout(10_000)),
       adapter.listAlbums('random', 10, 0, AbortSignal.timeout(10_000)),
     ]);
-    const recentlyPlayed = await this.resolveTracks(recentRefs);
+    const recentlyPlayed = await this.resolveTracks(userId, recentRefs);
     return {
       recentlyPlayed,
       topArtists: habits.artists,
@@ -128,13 +138,14 @@ export class MusicSourceService {
     const tracks = kind === 'tracks' ? aggregateTracks(evidence).slice(offset, offset + limit + 1) : [];
     const selected = kind === 'artists' ? artists : kind === 'albums' ? albums : tracks;
     const hasMore = selected.length > limit;
+    const visibleTracks = tracks.slice(0, limit);
     return {
       kind,
       period,
       dataSince,
       artists: artists.slice(0, limit),
       albums: albums.slice(0, limit),
-      tracks: tracks.slice(0, limit),
+      tracks: await this.personalizeTracks(userId, visibleTracks),
       nextCursor: hasMore ? String(offset + limit) : null,
     };
   }
@@ -151,7 +162,7 @@ export class MusicSourceService {
       : await this.activity?.mostPlayedTrackReferences(userId, limit + 1, offset) ?? [];
     const page = references.slice(0, limit);
     return {
-      tracks: await this.resolveTracks(page),
+      tracks: await this.resolveTracks(userId, page),
       nextCursor: references.length > limit ? String(offset + page.length) : null,
     };
   }
@@ -185,14 +196,16 @@ export class MusicSourceService {
     };
   }
 
-  public async tracks(limit: number, cursor?: string) {
+  public async tracks(userId: string, limit: number, cursor?: string) {
     const source = await this.requireCurrent();
     const offset = parseCursor(cursor);
     const tracks = await this.adapterFor(source).listTracks(
       limit, offset, AbortSignal.timeout(10_000),
     );
     return {
-      tracks: tracks.map((track) => publicTrack(source.id, track)),
+      tracks: await this.personalizeTracks(
+        userId, tracks.map((track) => publicTrack(source.id, track)),
+      ),
       nextCursor: tracks.length === limit ? String(offset + tracks.length) : null,
     };
   }
@@ -202,7 +215,7 @@ export class MusicSourceService {
     return { genres: await this.adapterFor(source).listGenres(AbortSignal.timeout(10_000)) };
   }
 
-  public async genre(name: string, limit: number) {
+  public async genre(userId: string, name: string, limit: number) {
     const source = await this.requireCurrent();
     const adapter = this.adapterFor(source);
     const [albums, tracks] = await Promise.all([
@@ -212,20 +225,24 @@ export class MusicSourceService {
     return {
       genre: name,
       albums: albums.map((album) => publicAlbum(source.id, album)),
-      tracks: tracks.map((track) => publicTrack(source.id, track)),
+      tracks: await this.personalizeTracks(
+        userId, tracks.map((track) => publicTrack(source.id, track)),
+      ),
     };
   }
 
-  public async album(reference: string): Promise<AlbumDetail> {
+  public async album(userId: string, reference: string): Promise<AlbumDetail> {
     const { source, remoteId } = await this.resolveReference(reference);
     const album = await this.adapterFor(source).getAlbum(remoteId, AbortSignal.timeout(10_000));
     return {
       ...publicAlbum(source.id, album),
-      tracks: album.tracks.map((track) => publicTrack(source.id, track)),
+      tracks: await this.personalizeTracks(
+        userId, album.tracks.map((track) => publicTrack(source.id, track)),
+      ),
     };
   }
 
-  public async artist(reference: string): Promise<ArtistDetail> {
+  public async artist(userId: string, reference: string): Promise<ArtistDetail> {
     const { source, remoteId } = await this.resolveReference(reference);
     const artist = await this.adapterFor(source).getArtist(remoteId, AbortSignal.timeout(10_000));
     const localGenres = localArtistGenres(artist)
@@ -238,7 +255,9 @@ export class MusicSourceService {
       biography: artist.biography,
       externalUrl: artist.externalUrl,
       similarArtists: artist.similarArtists.map((item) => publicArtist(source.id, item)),
-      topTracks: artist.topTracks.map((track) => publicTrack(source.id, track)),
+      topTracks: await this.personalizeTracks(
+        userId, artist.topTracks.map((track) => publicTrack(source.id, track)),
+      ),
     };
   }
 
@@ -317,12 +336,32 @@ export class MusicSourceService {
     return { adjustmentMs };
   }
 
-  public async track(reference: string, signal?: AbortSignal) {
+  public async track(userId: string, reference: string, signal?: AbortSignal) {
+    const track = await this.fetchTrack(reference, signal);
+    return (await this.personalizeTracks(userId, [track]))[0]!;
+  }
+
+  public async favoriteTracks(userId: string, limit: number, cursor?: string) {
+    if (!this.favorites) throw new MusicSourceUnavailableError('Favorites are not configured');
+    const offset = parseCursor(cursor);
+    const references = await this.favorites.trackReferences(userId, limit + 1, offset);
+    const page = references.slice(0, limit);
+    return {
+      tracks: await this.resolveTracks(userId, page),
+      nextCursor: references.length > limit ? String(offset + page.length) : null,
+    };
+  }
+
+  public async setTrackFavorite(userId: string, reference: string, favorite: boolean) {
+    if (!this.favorites) throw new MusicSourceUnavailableError('Favorites are not configured');
     const { source, remoteId } = await this.resolveReference(reference);
-    const track = await this.adapterFor(source).getTrack(remoteId, signal);
-    try { await this.catalog?.observeTracks(source.id, [track]); }
-    catch { /* Catalog enrichment must never interrupt playback or library browsing. */ }
-    return publicTrack(source.id, track);
+    if (favorite) {
+      const track = await this.adapterFor(source).getTrack(remoteId, AbortSignal.timeout(8_000));
+      try { await this.catalog?.observeTracks(source.id, [track]); }
+      catch { /* Catalog enrichment must never interrupt a personal action. */ }
+    }
+    await this.favorites.setTrack(userId, source.id, remoteId, favorite);
+    return { reference, favorite };
   }
 
   private async requireCurrent(): Promise<StoredMusicSource> {
@@ -355,15 +394,47 @@ export class MusicSourceService {
     return { source, remoteId: decoded.remoteId };
   }
 
-  private async resolveTracks(references: string[]): Promise<Track[]> {
+  private async resolveTracks(userId: string, references: string[]): Promise<Track[]> {
     const results: Array<Track | null> = [];
     for (let index = 0; index < references.length; index += 6) {
       results.push(...await Promise.all(references.slice(index, index + 6).map(async (reference) => {
-        try { return await this.track(reference, AbortSignal.timeout(8_000)); }
+        try { return await this.fetchTrack(reference, AbortSignal.timeout(8_000)); }
         catch { return null; }
       })));
     }
-    return results.filter((track): track is Track => track !== null);
+    return this.personalizeTracks(userId, results.filter((track): track is Track => track !== null));
+  }
+
+  private async fetchTrack(reference: string, signal?: AbortSignal): Promise<Track> {
+    const { source, remoteId } = await this.resolveReference(reference);
+    const track = await this.adapterFor(source).getTrack(remoteId, signal);
+    try { await this.catalog?.observeTracks(source.id, [track]); }
+    catch { /* Catalog enrichment must never interrupt playback or library browsing. */ }
+    return publicTrack(source.id, track);
+  }
+
+  private async personalizeTracks<T extends Track>(userId: string, tracks: T[]): Promise<T[]> {
+    if (!tracks.length) return tracks;
+    const identities = tracks.flatMap((track) => {
+      const decoded = decodeTrackReference(track.id);
+      return decoded ? [{ sourceId: decoded.sourceId, remoteTrackId: decoded.remoteId }] : [];
+    });
+    if (!this.favorites || !identities.length) {
+      return tracks.map((track) => ({ ...track, favorite: false }));
+    }
+    try {
+      const favoriteKeys = await this.favorites.matchingTrackKeys(userId, identities);
+      return tracks.map((track) => {
+        const decoded = decodeTrackReference(track.id);
+        return {
+          ...track,
+          favorite: Boolean(decoded && favoriteKeys.has(trackKey(decoded.sourceId, decoded.remoteId))),
+        };
+      });
+    } catch {
+      // Personal metadata must not make the shared library unavailable.
+      return tracks.map((track) => ({ ...track, favorite: false }));
+    }
   }
 
   private startArtistTagLookup(

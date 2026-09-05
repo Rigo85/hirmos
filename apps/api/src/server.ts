@@ -25,6 +25,7 @@ import { ArtistTagService } from './metadata/artist-tag-service.js';
 import { LastFmTagProvider } from './metadata/lastfm-tag-provider.js';
 import { MusicBrainzTagProvider } from './metadata/musicbrainz-tag-provider.js';
 import { TagRepository } from './metadata/tag-repository.js';
+import { FavoriteRepository } from './favorites/favorite-repository.js';
 
 const config = loadConfig();
 const database = config.DATABASE_URL ? createDatabase(config.DATABASE_URL) : null;
@@ -62,6 +63,7 @@ const musicSourceService = database && config.DATA_ENCRYPTION_KEY
       [new AmllLyricsProvider(), new LrclibLyricsProvider()],
       new CatalogRepository(database),
       artistTagService,
+      new FavoriteRepository(database),
     )
   : undefined;
 const playbackService = database

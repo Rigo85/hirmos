@@ -70,6 +70,13 @@ export const routes: Routes = [
           import('./features/habits/habits.component').then((module) => module.HabitsComponent),
       },
       {
+        path: 'favorites',
+        loadComponent: () =>
+          import('./features/favorites/favorites.component').then(
+            (module) => module.FavoritesComponent,
+          ),
+      },
+      {
         path: 'genres/:name',
         loadComponent: () =>
           import('./features/genre/genre.component').then((module) => module.GenreComponent),
