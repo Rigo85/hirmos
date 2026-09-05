@@ -38,9 +38,17 @@ describe('ArtistComponent', () => {
   it('renders the complete popular-track list inside its scrollable viewport and plays it as context', async () => {
     const fixture = TestBed.createComponent(ArtistComponent);
     fixture.detectChanges();
-    TestBed.inject(HttpTestingController)
+    const http = TestBed.inject(HttpTestingController);
+    http
       .expectOne('/api/library/artists/artist-id')
       .flush(artistWithPopularTracks(8));
+    await fixture.whenStable();
+    http.expectOne('/api/library/artists/artist-id/genres').flush({
+      genres: [
+        { name: 'Rock', browsable: true, reference: 'rock' },
+        { name: 'Grunge', browsable: false, reference: null },
+      ],
+    });
     await fixture.whenStable();
     fixture.detectChanges();
 
@@ -48,6 +56,8 @@ describe('ArtistComponent', () => {
     expect(fixture.nativeElement.querySelector('.popular-tracks-count').textContent)
       .toContain('8 canciones');
     expect(fixture.nativeElement.querySelector('.popular-tracks-toggle')).toBeNull();
+    expect(fixture.nativeElement.querySelectorAll('.artist-hero .tag-list a')).toHaveLength(1);
+    expect(fixture.nativeElement.querySelectorAll('.artist-hero .tag-list span')).toHaveLength(1);
 
     popularTrackButtons(fixture.nativeElement)[6].click();
     expect(selectContext).toHaveBeenCalledWith(
@@ -66,7 +76,7 @@ function popularTrackButtons(root: HTMLElement): HTMLButtonElement[] {
 function artistWithPopularTracks(count: number): ArtistDetail {
   return {
     id: 'artist-id', name: 'Artista', coverUrl: null, albumCount: 0, favorite: false,
-    albums: [], biography: null, externalUrl: null, similarArtists: [],
+    albums: [], genres: [], biography: null, externalUrl: null, similarArtists: [],
     topTracks: Array.from({ length: count }, (_, index): Track => ({
       id: `track-${index + 1}`,
       title: `Canción ${index + 1}`,
@@ -77,6 +87,7 @@ function artistWithPopularTracks(count: number): ArtistDetail {
       durationMs: 180_000,
       coverUrl: null,
       year: 2026,
+      genres: [],
       favorite: false,
     })),
   };

@@ -80,6 +80,7 @@ function track(id: string): Track {
     durationMs: 180_000,
     coverUrl: null,
     year: 2026,
+    genres: [],
     favorite: false,
   };
 }

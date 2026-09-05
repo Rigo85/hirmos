@@ -20,6 +20,7 @@ export interface SourceArtist {
   coverArtId: string | null;
   albumCount: number;
   favorite: boolean;
+  musicBrainzId: string | null;
 }
 
 export interface SourceAlbum {
@@ -32,6 +33,8 @@ export interface SourceAlbum {
   durationMs: number;
   year: number | null;
   genre: string | null;
+  genres: string[];
+  musicBrainzId: string | null;
   favorite: boolean;
   playCount: number | null;
   lastPlayedAt: string | null;
@@ -62,6 +65,8 @@ export interface SourceTrack {
   durationMs: number;
   coverArtId: string | null;
   year: number | null;
+  genres: string[];
+  musicBrainzId: string | null;
   favorite: boolean;
 }
 
@@ -95,6 +100,9 @@ export interface MusicSourceAdapter {
   listAlbums(type: 'random' | 'newest' | 'frequent' | 'recent' | 'alphabeticalByName', limit: number, offset?: number, signal?: AbortSignal): Promise<SourceAlbum[]>;
   listArtists(signal?: AbortSignal): Promise<SourceArtist[]>;
   listGenres(signal?: AbortSignal): Promise<SourceGenre[]>;
+  listAlbumsByGenre(genre: string, limit: number, offset?: number, signal?: AbortSignal): Promise<SourceAlbum[]>;
+  listTracksByGenre(genre: string, limit: number, offset?: number, signal?: AbortSignal): Promise<SourceTrack[]>;
+  listAlbumsByYear(year: number, limit: number, offset?: number, signal?: AbortSignal): Promise<SourceAlbum[]>;
   getAlbum(albumId: string, signal?: AbortSignal): Promise<SourceAlbumDetail>;
   getArtist(artistId: string, signal?: AbortSignal): Promise<SourceArtistDetail>;
   getStream(trackId: string, range?: string, signal?: AbortSignal): Promise<SourceMedia>;

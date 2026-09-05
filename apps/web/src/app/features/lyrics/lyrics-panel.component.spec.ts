@@ -8,7 +8,7 @@ import { findActiveLyricLine, LyricsPanelComponent } from './lyrics-panel.compon
 const track: Track = {
   id: 'track-a', title: 'Canción', artist: 'Artista', artistId: null,
   album: 'Álbum', albumId: null, durationMs: 180_000, coverUrl: null,
-  year: null, favorite: false,
+  year: null, genres: [], favorite: false,
 };
 
 describe('findActiveLyricLine', () => {

@@ -2,7 +2,7 @@
   @if (error()) { <p class="form-error" role="alert">{{ error() }}</p> }
   @if (!artist() && !error()) { <div class="page-loading"><span></span><p>Cargando artista…</p></div> }
   @if (artist(); as item) {
-    <header class="artist-hero">@if (item.coverUrl) { <img [src]="item.coverUrl" [alt]="item.name"> } @else { <span>{{ item.name.slice(0, 2).toUpperCase() }}</span> }<div><p class="eyebrow">ARTISTA</p><h1>{{ item.name }}</h1><p class="muted">{{ item.albums.length }} álbumes · {{ songCount() }} canciones</p></div></header>
+    <header class="artist-hero">@if (item.coverUrl) { <img [src]="item.coverUrl" [alt]="item.name"> } @else { <span>{{ item.name.slice(0, 2).toUpperCase() }}</span> }<div><p class="eyebrow">ARTISTA</p><h1>{{ item.name }}</h1><p class="muted">{{ item.albums.length }} álbumes · {{ songCount() }} canciones</p>@if (item.genres.length) { <nav class="tag-list" aria-label="Géneros del artista">@for (genre of item.genres; track genre.name) { @if (genre.browsable && genre.reference) { <a [routerLink]="['/genres', genre.reference]">{{ genre.name }}</a> } @else { <span [title]="'Etiqueta complementaria para ' + item.name">{{ genre.name }}</span> } }</nav> }</div></header>
     @if (item.topTracks.length || item.biography) {
       <section class="artist-overview" [class.artist-overview--single]="!item.topTracks.length || !item.biography">
         @if (item.topTracks.length) {

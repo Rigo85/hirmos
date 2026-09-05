@@ -1,6 +1,7 @@
 import { HttpClient } from '@angular/common/http';
-import { Component, inject, signal } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { Component, DestroyRef, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import type {
   Album, AlbumListResponse, Artist, ArtistListResponse, Genre,
   GenreListResponse, Track, TrackListResponse,
@@ -14,6 +15,9 @@ type LibraryView = 'albums' | 'artists' | 'tracks' | 'genres';
 @Component({ selector: 'app-library', imports: [RouterLink, TrackRowComponent], templateUrl: './library.component.html' })
 export class LibraryComponent {
   private readonly http = inject(HttpClient);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
+  private readonly destroyRef = inject(DestroyRef);
   protected readonly playback = inject(PlaybackSyncService);
   protected readonly view = signal<LibraryView>('albums');
   protected readonly albums = signal<Album[]>([]);
@@ -22,16 +26,35 @@ export class LibraryComponent {
   protected readonly genres = signal<Genre[]>([]);
   protected readonly loading = signal(true);
   protected readonly error = signal<string | null>(null);
+  protected readonly year = signal<number | null>(null);
 
-  public constructor() { void this.load(); }
+  public constructor() {
+    this.route.queryParamMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((params) => {
+      const requestedView = params.get('view');
+      const selected = ['albums', 'artists', 'tracks', 'genres'].includes(requestedView ?? '')
+        ? requestedView as LibraryView : 'albums';
+      const requestedYear = Number.parseInt(params.get('year') ?? '', 10);
+      this.view.set(Number.isInteger(requestedYear) ? 'albums' : selected);
+      this.year.set(Number.isInteger(requestedYear) ? requestedYear : null);
+      void this.load(this.year());
+    });
+  }
 
-  protected select(view: LibraryView): void { this.view.set(view); }
+  protected select(view: LibraryView): void {
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { view: view === 'albums' ? null : view, year: null },
+    });
+  }
   protected play(track: Track): void { void this.playback.select(track); }
 
-  private async load(): Promise<void> {
+  private async load(year: number | null): Promise<void> {
+    this.loading.set(true); this.error.set(null);
     try {
       const [albums, artists, tracks, genres] = await Promise.all([
-        firstValueFrom(this.http.get<AlbumListResponse>('/api/library/albums', { params: { limit: 60, sort: 'alphabeticalByName' } })),
+        firstValueFrom(this.http.get<AlbumListResponse>('/api/library/albums', {
+          params: { limit: 60, sort: 'alphabeticalByName', ...(year ? { year } : {}) },
+        })),
         firstValueFrom(this.http.get<ArtistListResponse>('/api/library/artists', { params: { limit: 100 } })),
         firstValueFrom(this.http.get<TrackListResponse>('/api/library/tracks', { params: { limit: 100 } })),
         firstValueFrom(this.http.get<GenreListResponse>('/api/library/genres')),

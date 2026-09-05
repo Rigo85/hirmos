@@ -21,6 +21,10 @@ import { CatalogRepository } from './activity/catalog-repository.js';
 import { LyricsRepository } from './lyrics/lyrics-repository.js';
 import { LrclibLyricsProvider } from './lyrics/lrclib-lyrics-provider.js';
 import { AmllLyricsProvider } from './lyrics/amll-lyrics-provider.js';
+import { ArtistTagService } from './metadata/artist-tag-service.js';
+import { LastFmTagProvider } from './metadata/lastfm-tag-provider.js';
+import { MusicBrainzTagProvider } from './metadata/musicbrainz-tag-provider.js';
+import { TagRepository } from './metadata/tag-repository.js';
 
 const config = loadConfig();
 const database = config.DATABASE_URL ? createDatabase(config.DATABASE_URL) : null;
@@ -41,6 +45,13 @@ const accountService = database && outboxCipher
     )
   : undefined;
 const activityRepository = database ? new ActivityRepository(database) : undefined;
+const artistTagService = database
+  ? new ArtistTagService(
+      new TagRepository(database),
+      [new MusicBrainzTagProvider(), ...(config.LASTFM_API_KEY
+        ? [new LastFmTagProvider(config.LASTFM_API_KEY)] : [])],
+    )
+  : undefined;
 const musicSourceService = database && config.DATA_ENCRYPTION_KEY
   ? new MusicSourceService(
       new MusicSourceRepository(database),
@@ -50,6 +61,7 @@ const musicSourceService = database && config.DATA_ENCRYPTION_KEY
       new LyricsRepository(database),
       [new AmllLyricsProvider(), new LrclibLyricsProvider()],
       new CatalogRepository(database),
+      artistTagService,
     )
   : undefined;
 const playbackService = database

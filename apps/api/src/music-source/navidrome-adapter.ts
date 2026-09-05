@@ -169,6 +169,45 @@ export class NavidromeAdapter implements MusicSourceAdapter {
     }));
   }
 
+  public async listAlbumsByGenre(
+    genre: string, limit: number, offset = 0, signal?: AbortSignal,
+  ): Promise<SourceAlbum[]> {
+    const size = Math.min(100, Math.max(1, limit));
+    const response = await this.call<{ albumList2?: { album?: SourceAlbumRecord[] } }>(
+      'getAlbumList2',
+      { type: 'byGenre', genre, size: String(size), offset: String(Math.max(0, offset)) },
+      signal,
+    );
+    return (response.albumList2?.album ?? []).map(mapAlbum);
+  }
+
+  public async listTracksByGenre(
+    genre: string, limit: number, offset = 0, signal?: AbortSignal,
+  ): Promise<SourceTrack[]> {
+    const count = Math.min(500, Math.max(1, limit));
+    const response = await this.call<{ songsByGenre?: { song?: SourceSong[] } }>(
+      'getSongsByGenre',
+      { genre, count: String(count), offset: String(Math.max(0, offset)) },
+      signal,
+    );
+    return (response.songsByGenre?.song ?? []).map(mapSong);
+  }
+
+  public async listAlbumsByYear(
+    year: number, limit: number, offset = 0, signal?: AbortSignal,
+  ): Promise<SourceAlbum[]> {
+    const size = Math.min(100, Math.max(1, limit));
+    const response = await this.call<{ albumList2?: { album?: SourceAlbumRecord[] } }>(
+      'getAlbumList2',
+      {
+        type: 'byYear', fromYear: String(year), toYear: String(year),
+        size: String(size), offset: String(Math.max(0, offset)),
+      },
+      signal,
+    );
+    return (response.albumList2?.album ?? []).map(mapAlbum).filter((album) => album.year === year);
+  }
+
   public async getAlbum(albumId: string, signal?: AbortSignal): Promise<SourceAlbumDetail> {
     const response = await this.call<{ album?: SourceAlbumRecord & { song?: SourceSong[] } }>(
       'getAlbum', { id: albumId }, signal,
@@ -351,6 +390,9 @@ interface SourceSong {
   duration?: number;
   coverArt?: string;
   year?: number;
+  genre?: string;
+  genres?: Array<{ name?: string } | string> | { genre?: Array<{ name?: string } | string> };
+  musicBrainzId?: string;
   starred?: string;
 }
 
@@ -365,6 +407,8 @@ function mapSong(song: SourceSong): SourceTrack {
     durationMs: Math.max(0, Math.round((song.duration ?? 0) * 1_000)),
     coverArtId: song.coverArt ?? null,
     year: song.year ?? null,
+    genres: collectGenres(song.genre, song.genres),
+    musicBrainzId: song.musicBrainzId ?? null,
     favorite: Boolean(song.starred),
   };
 }
@@ -375,6 +419,7 @@ interface SourceArtistRecord {
   coverArt?: string;
   albumCount?: number;
   starred?: string;
+  musicBrainzId?: string;
 }
 
 interface SourceAlbumRecord {
@@ -389,6 +434,8 @@ interface SourceAlbumRecord {
   duration?: number;
   year?: number;
   genre?: string;
+  genres?: Array<{ name?: string } | string> | { genre?: Array<{ name?: string } | string> };
+  musicBrainzId?: string;
   starred?: string;
   playCount?: number;
   played?: string;
@@ -401,6 +448,7 @@ function mapArtist(artist: SourceArtistRecord): SourceArtist {
     coverArtId: artist.coverArt ?? null,
     albumCount: Math.max(0, artist.albumCount ?? 0),
     favorite: Boolean(artist.starred),
+    musicBrainzId: artist.musicBrainzId ?? null,
   };
 }
 
@@ -415,10 +463,25 @@ function mapAlbum(album: SourceAlbumRecord): SourceAlbum {
     durationMs: Math.max(0, Math.round((album.duration ?? 0) * 1_000)),
     year: album.year ?? null,
     genre: album.genre ?? null,
+    genres: collectGenres(album.genre, album.genres),
+    musicBrainzId: album.musicBrainzId ?? null,
     favorite: Boolean(album.starred),
     playCount: typeof album.playCount === 'number' ? Math.max(0, album.playCount) : null,
     lastPlayedAt: album.played ?? null,
   };
+}
+
+function collectGenres(
+  legacy: string | undefined,
+  value: Array<{ name?: string } | string> | { genre?: Array<{ name?: string } | string> } | undefined,
+): string[] {
+  const items = Array.isArray(value) ? value : value?.genre ?? [];
+  const names = items.flatMap((item) => {
+    const name = typeof item === 'string' ? item : item.name;
+    return name?.trim() ? [name.trim()] : [];
+  });
+  if (legacy?.trim()) names.unshift(legacy.trim());
+  return [...new Map(names.map((name) => [name.toLocaleLowerCase(), name])).values()];
 }
 
 function cleanExternalText(value: string | undefined): string | null {

@@ -17,6 +17,7 @@ export type AppIconName =
   | 'previous'
   | 'queue'
   | 'search'
+  | 'shuffle'
   | 'settings'
   | 'users'
   | 'volume';
@@ -72,6 +73,11 @@ export type AppIconName =
         @case ('queue') {
           <path d="M4 6.5h10M4 12h10M4 17.5h7" />
           <path class="icon-fill" d="m16 13.8 5 3.2-5 3.2z" />
+        }
+        @case ('shuffle') {
+          <path d="M4 7h2.5c4.7 0 6.3 10 11 10H20" />
+          <path d="m17 14 3 3-3 3M4 17h2.5c1.8 0 3.2-1.5 4.4-3.3M13.2 8.9C14.4 7.7 15.8 7 17.5 7H20" />
+          <path d="m17 4 3 3-3 3" />
         }
         @case ('volume') {
           <path d="M4 10v4h3.3l4.2 3.6V6.4L7.3 10zM15.3 8.8a4.6 4.6 0 0 1 0 6.4M17.9 6.5a7.8 7.8 0 0 1 0 11" />

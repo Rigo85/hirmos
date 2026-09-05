@@ -70,6 +70,11 @@ export const routes: Routes = [
           import('./features/habits/habits.component').then((module) => module.HabitsComponent),
       },
       {
+        path: 'genres/:name',
+        loadComponent: () =>
+          import('./features/genre/genre.component').then((module) => module.GenreComponent),
+      },
+      {
         path: 'albums/:id',
         loadComponent: () =>
           import('./features/album/album.component').then((module) => module.AlbumComponent),

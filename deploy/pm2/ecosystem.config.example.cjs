@@ -7,7 +7,7 @@ if (!envFile) throw new Error('HIRMOS_ENV_FILE must point to a private environme
 const allowed = new Set([
   'NODE_ENV', 'HOST', 'PORT', 'LOG_LEVEL', 'PUBLIC_ORIGIN', 'TRUSTED_PROXIES', 'DATABASE_URL',
   'DATA_ENCRYPTION_KEY', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURE', 'SMTP_USER',
-  'SMTP_APP_PASSWORD_FILE', 'MAIL_FROM',
+  'SMTP_APP_PASSWORD_FILE', 'MAIL_FROM', 'LASTFM_API_KEY',
 ]);
 
 function loadEnvironment() {

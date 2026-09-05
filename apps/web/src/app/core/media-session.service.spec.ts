@@ -130,5 +130,6 @@ const track: Track = {
   durationMs: 180_000,
   coverUrl: '/api/music/covers/cover-id',
   year: 2026,
+  genres: [],
   favorite: false,
 };

@@ -109,6 +109,7 @@ export const trackSchema = z.object({
   durationMs: z.number().int().nonnegative(),
   coverUrl: z.string().nullable(),
   year: z.number().int().nullable(),
+  genres: z.array(z.string()).default([]),
   favorite: z.boolean(),
 });
 export type Track = z.infer<typeof trackSchema>;
@@ -132,6 +133,7 @@ export const albumSchema = z.object({
   durationMs: z.number().int().nonnegative(),
   year: z.number().int().nullable(),
   genre: z.string().nullable(),
+  genres: z.array(z.string()).default([]),
   favorite: z.boolean(),
   playCount: z.number().int().nonnegative().nullable(),
   lastPlayedAt: z.iso.datetime().nullable(),
@@ -148,14 +150,27 @@ export type Genre = z.infer<typeof genreSchema>;
 export const albumDetailSchema = albumSchema.extend({ tracks: z.array(trackSchema) });
 export type AlbumDetail = z.infer<typeof albumDetailSchema>;
 
+export const artistGenreTagSchema = z.object({
+  name: z.string(),
+  browsable: z.boolean(),
+  reference: z.string().nullable(),
+});
+export type ArtistGenreTag = z.infer<typeof artistGenreTagSchema>;
+
 export const artistDetailSchema = artistSchema.extend({
   albums: z.array(albumSchema),
+  genres: z.array(artistGenreTagSchema).default([]),
   biography: z.string().nullable(),
   externalUrl: z.url().nullable(),
   similarArtists: z.array(artistSchema),
   topTracks: z.array(trackSchema),
 });
 export type ArtistDetail = z.infer<typeof artistDetailSchema>;
+
+export const artistGenreTagsResponseSchema = z.object({
+  genres: z.array(artistGenreTagSchema),
+});
+export type ArtistGenreTagsResponse = z.infer<typeof artistGenreTagsResponseSchema>;
 
 export const searchResponseSchema = z.object({
   artists: z.array(artistSchema).default([]),
@@ -229,6 +244,13 @@ export type TrackListResponse = z.infer<typeof trackListResponseSchema>;
 
 export const genreListResponseSchema = z.object({ genres: z.array(genreSchema) });
 export type GenreListResponse = z.infer<typeof genreListResponseSchema>;
+
+export const genreDetailResponseSchema = z.object({
+  genre: z.string(),
+  albums: z.array(albumSchema),
+  tracks: z.array(trackSchema),
+});
+export type GenreDetailResponse = z.infer<typeof genreDetailResponseSchema>;
 
 export const lyricWordSchema = z.object({
   startMs: z.number().int().nonnegative(),
@@ -309,7 +331,7 @@ export interface ClientToServerEvents {
     expectedRevision: number;
     trackRefs: string[];
     selectedIndex: number;
-    contextType: 'album' | 'artist' | 'search' | 'home';
+    contextType: 'album' | 'artist' | 'search' | 'home' | 'genre';
     contextRef: string | null;
   }, ack?: PlaybackCommandAck) => void;
   'playback:update': (command: {

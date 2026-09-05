@@ -2,7 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import type { ArtistDetail, Track } from '@hirmos/contracts';
+import type { ArtistDetail, ArtistGenreTagsResponse, Track } from '@hirmos/contracts';
 import { firstValueFrom } from 'rxjs';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { TrackRowComponent } from '../../shared/track-row.component';
@@ -18,6 +18,7 @@ export class ArtistComponent {
     this.artist()?.albums.reduce((total, album) => total + album.songCount, 0) ?? 0,
   );
   protected readonly error = signal<string | null>(null);
+  private loadVersion = 0;
   public constructor() {
     this.route.paramMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((params) => {
       const id = params.get('id'); if (id) void this.load(id);
@@ -34,8 +35,26 @@ export class ArtistComponent {
     );
   }
   private async load(id: string): Promise<void> {
+    const version = ++this.loadVersion;
     this.artist.set(null); this.error.set(null);
-    try { this.artist.set(await firstValueFrom(this.http.get<ArtistDetail>(`/api/library/artists/${encodeURIComponent(id)}`))); }
+    try {
+      this.artist.set(await firstValueFrom(this.http.get<ArtistDetail>(`/api/library/artists/${encodeURIComponent(id)}`)));
+      void this.loadGenres(id, version);
+    }
     catch { this.error.set('No pudimos abrir este artista.'); }
+  }
+
+  private async loadGenres(id: string, version: number): Promise<void> {
+    try {
+      const response = await firstValueFrom(this.http.get<ArtistGenreTagsResponse>(
+        `/api/library/artists/${encodeURIComponent(id)}/genres`,
+      ));
+      const current = this.artist();
+      if (current && version === this.loadVersion) {
+        this.artist.set({ ...current, genres: response.genres });
+      }
+    } catch {
+      // Local OpenSubsonic genres remain usable when public metadata is unavailable.
+    }
   }
 }

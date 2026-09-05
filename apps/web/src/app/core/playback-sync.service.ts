@@ -121,7 +121,7 @@ export class PlaybackSyncService {
   public async selectContext(
     tracks: Track[],
     selectedIndex: number,
-    contextType: 'album' | 'artist' | 'search' | 'home',
+    contextType: 'album' | 'artist' | 'search' | 'home' | 'genre',
     contextRef: string | null,
   ): Promise<void> {
     if (!tracks.length || selectedIndex < 0 || selectedIndex >= tracks.length) return;

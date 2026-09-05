@@ -23,6 +23,7 @@ const configSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_APP_PASSWORD_FILE: z.string().optional(),
   MAIL_FROM: z.string().optional(),
+  LASTFM_API_KEY: z.string().min(1).optional(),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

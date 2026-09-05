@@ -185,11 +185,17 @@ export async function registerMusicSourceRoutes(
     const denied = requireAuthentication(request, reply);
     if (denied) return denied;
     if (!service) return notConfigured(request, reply);
-    const query = request.query as { sort?: string; limit?: string; cursor?: string };
+    const query = request.query as { sort?: string; limit?: string; cursor?: string; year?: string };
     const sorts = ['random', 'newest', 'frequent', 'recent', 'alphabeticalByName'] as const;
     const sort = sorts.find((value) => value === query.sort) ?? 'alphabeticalByName';
+    const year = query.year ? Number.parseInt(query.year, 10) : undefined;
+    if (year !== undefined && (!Number.isInteger(year) || year < 1 || year > 9999)) {
+      return reply.code(400).send({
+        code: 'INVALID_YEAR', message: 'El año indicado no es válido.', requestId: request.id,
+      });
+    }
     return libraryResponse(request, reply, () =>
-      service.albums(sort, parseLimit(query.limit), query.cursor));
+      service.albums(sort, parseLimit(query.limit), query.cursor, year));
   });
 
   app.get('/api/library/artists', async (request, reply) => {
@@ -217,6 +223,21 @@ export async function registerMusicSourceRoutes(
     return libraryResponse(request, reply, () => service.genres());
   });
 
+  app.get('/api/library/genres/:name', async (request, reply) => {
+    const denied = requireAuthentication(request, reply);
+    if (denied) return denied;
+    if (!service) return notConfigured(request, reply);
+    const { name } = request.params as { name: string };
+    const query = request.query as { limit?: string };
+    const genre = name.trim();
+    if (!genre || genre.length > 150) {
+      return reply.code(400).send({
+        code: 'INVALID_GENRE', message: 'El género indicado no es válido.', requestId: request.id,
+      });
+    }
+    return libraryResponse(request, reply, () => service.genre(genre, parseLimit(query.limit)));
+  });
+
   app.get('/api/library/albums/:reference', async (request, reply) => {
     const denied = requireAuthentication(request, reply);
     if (denied) return denied;
@@ -231,6 +252,14 @@ export async function registerMusicSourceRoutes(
     if (!service) return notConfigured(request, reply);
     const { reference } = request.params as { reference: string };
     return libraryResponse(request, reply, () => service.artist(reference));
+  });
+
+  app.get('/api/library/artists/:reference/genres', async (request, reply) => {
+    const denied = requireAuthentication(request, reply);
+    if (denied) return denied;
+    if (!service) return notConfigured(request, reply);
+    const { reference } = request.params as { reference: string };
+    return libraryResponse(request, reply, () => service.artistGenreTags(reference));
   });
 
   app.get('/api/music/tracks/:reference/stream', async (request, reply) => {

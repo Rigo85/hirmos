@@ -17,10 +17,15 @@ import type { CatalogRepository } from '../activity/catalog-repository.js';
 import type { LyricsRepository } from '../lyrics/lyrics-repository.js';
 import type { LyricsProvider } from '../lyrics/lyrics-provider.js';
 import { createHash } from 'node:crypto';
+import type { ArtistTagService } from '../metadata/artist-tag-service.js';
 
 export class MusicSourceUnavailableError extends Error {}
 
 export class MusicSourceService {
+  private readonly artistTagLookups = new Map<string, Promise<Array<{
+    name: string; browsable: boolean; reference: string | null;
+  }>>>();
+
   public constructor(
     private readonly repository: MusicSourceRepository,
     private readonly cipher: SourceCredentialCipher,
@@ -29,6 +34,7 @@ export class MusicSourceService {
     private readonly lyricsRepository?: LyricsRepository,
     private readonly lyricsProviders: readonly LyricsProvider[] = [],
     private readonly catalog?: CatalogRepository,
+    private readonly artistTags?: ArtistTagService,
   ) {}
 
   public async currentForAdmin(): Promise<AdminMusicSource | null> {
@@ -154,12 +160,14 @@ export class MusicSourceService {
     sort: 'random' | 'newest' | 'frequent' | 'recent' | 'alphabeticalByName',
     limit: number,
     cursor?: string,
+    year?: number,
   ) {
     const source = await this.requireCurrent();
     const offset = parseCursor(cursor);
-    const albums = await this.adapterFor(source).listAlbums(
-      sort, limit, offset, AbortSignal.timeout(10_000),
-    );
+    const adapter = this.adapterFor(source);
+    const albums = year
+      ? await adapter.listAlbumsByYear(year, limit, offset, AbortSignal.timeout(10_000))
+      : await adapter.listAlbums(sort, limit, offset, AbortSignal.timeout(10_000));
     return {
       albums: albums.map((album) => publicAlbum(source.id, album)),
       nextCursor: albums.length === limit ? String(offset + albums.length) : null,
@@ -194,6 +202,20 @@ export class MusicSourceService {
     return { genres: await this.adapterFor(source).listGenres(AbortSignal.timeout(10_000)) };
   }
 
+  public async genre(name: string, limit: number) {
+    const source = await this.requireCurrent();
+    const adapter = this.adapterFor(source);
+    const [albums, tracks] = await Promise.all([
+      adapter.listAlbumsByGenre(name, limit, 0, AbortSignal.timeout(10_000)),
+      adapter.listTracksByGenre(name, Math.min(500, limit * 4), 0, AbortSignal.timeout(10_000)),
+    ]);
+    return {
+      genre: name,
+      albums: albums.map((album) => publicAlbum(source.id, album)),
+      tracks: tracks.map((track) => publicTrack(source.id, track)),
+    };
+  }
+
   public async album(reference: string): Promise<AlbumDetail> {
     const { source, remoteId } = await this.resolveReference(reference);
     const album = await this.adapterFor(source).getAlbum(remoteId, AbortSignal.timeout(10_000));
@@ -206,14 +228,33 @@ export class MusicSourceService {
   public async artist(reference: string): Promise<ArtistDetail> {
     const { source, remoteId } = await this.resolveReference(reference);
     const artist = await this.adapterFor(source).getArtist(remoteId, AbortSignal.timeout(10_000));
+    const localGenres = localArtistGenres(artist)
+      .map((name) => ({ name, browsable: true, reference: name }));
+    if (this.artistTags) void this.startArtistTagLookup(source.id, artist).catch(() => undefined);
     return {
       ...publicArtist(source.id, artist),
       albums: artist.albums.map((album) => publicAlbum(source.id, album)),
+      genres: localGenres,
       biography: artist.biography,
       externalUrl: artist.externalUrl,
       similarArtists: artist.similarArtists.map((item) => publicArtist(source.id, item)),
       topTracks: artist.topTracks.map((track) => publicTrack(source.id, track)),
     };
+  }
+
+  public async artistGenreTags(reference: string) {
+    const { source, remoteId } = await this.resolveReference(reference);
+    const key = `${source.id}:${remoteId}`;
+    let lookup = this.artistTagLookups.get(key);
+    let localGenres: Array<{ name: string; browsable: boolean; reference: string | null }> = [];
+    if (!lookup) {
+      const artist = await this.adapterFor(source).getArtist(remoteId, AbortSignal.timeout(10_000));
+      localGenres = localArtistGenres(artist)
+        .map((name) => ({ name, browsable: true, reference: name }));
+      lookup = this.artistTags ? this.startArtistTagLookup(source.id, artist) : undefined;
+    }
+    const genres = await lookup?.catch(() => []) ?? [];
+    return { genres: genres.length ? genres : localGenres };
   }
 
   public async stream(reference: string, range?: string, signal?: AbortSignal): Promise<SourceMedia> {
@@ -325,6 +366,20 @@ export class MusicSourceService {
     return results.filter((track): track is Track => track !== null);
   }
 
+  private startArtistTagLookup(
+    sourceId: string,
+    artist: import('./music-source-adapter.js').SourceArtistDetail,
+  ): Promise<Array<{ name: string; browsable: boolean; reference: string | null }>> {
+    const key = `${sourceId}:${artist.id}`;
+    const existing = this.artistTagLookups.get(key);
+    if (existing) return existing;
+    const lookup = this.artistTags!.resolve(sourceId, artist);
+    this.artistTagLookups.set(key, lookup);
+    const timer = setTimeout(() => this.artistTagLookups.delete(key), 60_000);
+    timer.unref();
+    return lookup;
+  }
+
   private async ensureActivityCatalog(userId: string, source: StoredMusicSource): Promise<void> {
     if (!this.activity || !this.catalog) return;
     const references = await this.activity.trackedReferences(userId);
@@ -413,6 +468,7 @@ function aggregateAlbums(evidence: HabitEvidence[]): HabitAlbum[] {
     durationMs: 0,
     year: group.evidence.year,
     genre: null,
+    genres: [],
     favorite: false,
     playCount: null,
     ...habitMetrics(group),
@@ -430,6 +486,7 @@ function aggregateTracks(evidence: HabitEvidence[]): HabitTrack[] {
     durationMs: item.durationMs,
     coverUrl: publicCoverUrl(item.sourceId, item.coverArtId),
     year: item.year,
+    genres: [],
     favorite: false,
     listenedMs: item.listenedMs,
     playStarts: item.playStarts,
@@ -534,7 +591,7 @@ function normalizeBaseUrl(value: string): string {
 }
 
 function publicTrack(sourceId: string, track: SourceTrack): Track {
-  const { coverArtId, artistId, albumId, ...summary } = track;
+  const { coverArtId, artistId, albumId, musicBrainzId: _musicBrainzId, ...summary } = track;
   return {
     ...summary,
     id: encodeTrackReference(sourceId, track.id),
@@ -569,10 +626,27 @@ function publicAlbum(sourceId: string, album: SourceAlbum): Album {
     durationMs: album.durationMs,
     year: album.year,
     genre: album.genre,
+    genres: album.genres,
     favorite: album.favorite,
     playCount: album.playCount,
     lastPlayedAt: normalizeDate(album.lastPlayedAt),
   };
+}
+
+function localArtistGenres(artist: SourceArtist): string[];
+function localArtistGenres(artist: import('./music-source-adapter.js').SourceArtistDetail): string[];
+function localArtistGenres(
+  artist: SourceArtist | import('./music-source-adapter.js').SourceArtistDetail,
+): string[] {
+  if (!('albums' in artist)) return [];
+  const counts = new Map<string, { name: string; count: number }>();
+  for (const album of artist.albums) {
+    for (const genre of album.genres) {
+      const key = genre.toLocaleLowerCase();
+      counts.set(key, { name: genre, count: (counts.get(key)?.count ?? 0) + 1 });
+    }
+  }
+  return [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 5).map((item) => item.name);
 }
 
 function parseCursor(cursor: string | undefined): number {

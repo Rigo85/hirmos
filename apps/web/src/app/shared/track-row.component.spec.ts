@@ -93,6 +93,6 @@ function track(): Track {
   return {
     id: 'track-id', title: 'Canción', artist: 'Artista', artistId: 'artist-id',
     album: 'Álbum', albumId: 'album-id', durationMs: 180_000, coverUrl: null,
-    year: 2026, favorite: false,
+    year: 2026, genres: [], favorite: false,
   };
 }

@@ -1,0 +1,18 @@
+<div class="content-frame detail-page genre-page">
+  @if (error()) { <p class="form-error" role="alert">{{ error() }}</p> }
+  @if (!detail() && !error()) { <div class="page-loading"><span></span><p>Buscando música del género…</p></div> }
+  @if (detail(); as item) {
+    <header class="activity-page__header">
+      <p class="eyebrow">GÉNERO</p><h1>{{ item.genre }}</h1>
+      <p class="muted">{{ item.albums.length }} álbumes · {{ item.tracks.length }} canciones</p>
+      @if (item.tracks.length) { <div class="genre-actions"><button class="primary-button primary-button--compact play-album-button" type="button" (click)="play(item.tracks[0])"><app-icon name="play" /> Reproducir todo</button><button class="outline-button play-album-button" type="button" (click)="shuffle()"><app-icon name="shuffle" /> Aleatorio</button></div> }
+    </header>
+    @if (item.albums.length) {
+      <section class="music-section"><div class="section-heading"><h2>Álbumes</h2><span class="popular-tracks-count">Desliza para explorar</span></div><div class="genre-album-strip">@for (album of item.albums; track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img loading="lazy" decoding="async" [src]="album.coverUrl" [alt]="'Carátula de ' + album.name"> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small><em>{{ album.year || '—' }} · {{ album.songCount }} canciones</em></a> }</div></section>
+    }
+    @if (item.tracks.length) {
+      <section class="music-section"><div class="section-heading"><h2>Canciones</h2></div><ol class="track-results detail-tracks">@for (track of item.tracks; track track.id; let index = $index) { <li appTrackRow [track]="track" [position]="index + 1" [showCover]="true" (playTrack)="play(track)"></li> }</ol></section>
+    }
+    @if (!item.albums.length && !item.tracks.length) { <div class="empty-state"><span>♫</span><h2>No encontramos música</h2><p>La fuente no devolvió elementos para este género.</p></div> }
+  }
+</div>

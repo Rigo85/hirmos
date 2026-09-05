@@ -82,10 +82,51 @@ describe('NavidromeAdapter', () => {
       id: 'remote-track', title: 'Canción', artist: 'Artista', album: 'Álbum',
       artistId: null, albumId: null,
       durationMs: 215000, coverArtId: 'cover-id', year: 2020, favorite: true,
+      genres: [], musicBrainzId: null,
     }]);
     expect(result.artists).toEqual([]);
     expect(result.albums).toEqual([]);
     expect(result.nextCursor).toBeNull();
+  });
+
+  it('keeps plural OpenSubsonic genres and uses standard genre/year endpoints', async () => {
+    const urls: URL[] = [];
+    const fetchImplementation = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input)); urls.push(url);
+      if (url.pathname.includes('getSongsByGenre')) return Response.json({
+        'subsonic-response': { status: 'ok', version: '1.16.1', songsByGenre: { song: [{
+          id: 'song-a', title: 'Tema', genre: 'Rock', genres: [{ name: 'Rock' }, { name: 'Grunge' }],
+        }] } },
+      });
+      const byYear = url.searchParams.get('type') === 'byYear';
+      return Response.json({ 'subsonic-response': {
+        status: 'ok', version: '1.16.1', albumList2: { album: [{
+          id: 'album-a', name: 'Disco', genre: 'Rock', year: byYear ? 1994 : undefined,
+          genres: [{ name: 'Rock' }, { name: 'Alternative Rock' }],
+        }, ...(byYear ? [{ id: 'different-edition', name: 'Otra edición', year: 2005 }] : [])] },
+      } });
+    });
+    const adapter = new NavidromeAdapter({
+      baseUrl: new URL('https://music.example'), username: 'service', password: 'secret',
+      fetchImplementation: fetchImplementation as typeof fetch,
+    });
+
+    await expect(adapter.listAlbumsByGenre('Alternative Rock', 30)).resolves.toMatchObject([
+      { genres: ['Rock', 'Alternative Rock'] },
+    ]);
+    await expect(adapter.listTracksByGenre('Grunge', 40)).resolves.toMatchObject([
+      { genres: ['Rock', 'Grunge'] },
+    ]);
+    await expect(adapter.listAlbumsByYear(1994, 20)).resolves.toMatchObject([
+      { id: 'album-a', year: 1994 },
+    ]);
+
+    expect(urls[0]!.searchParams.get('type')).toBe('byGenre');
+    expect(urls[0]!.searchParams.get('genre')).toBe('Alternative Rock');
+    expect(urls[1]!.pathname).toContain('getSongsByGenre');
+    expect(urls[2]!.searchParams.get('type')).toBe('byYear');
+    expect(urls[2]!.searchParams.get('fromYear')).toBe('1994');
+    expect(urls[2]!.searchParams.get('toYear')).toBe('1994');
   });
 
   it('forwards byte ranges for audio without putting credentials in headers', async () => {
