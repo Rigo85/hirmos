@@ -8,5 +8,6 @@ export interface PublicLyricsResult {
 
 export interface LyricsProvider {
   readonly name: string;
+  readonly timeoutMs?: number;
   find(track: SourceTrack, signal?: AbortSignal): Promise<PublicLyricsResult | null>;
 }

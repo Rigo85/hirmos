@@ -41,6 +41,7 @@ export class LyricsPanelComponent implements OnDestroy {
   protected readonly lyricsDocument = signal<LyricsDocument | null>(null);
   protected readonly adjustmentMs = signal(0);
   protected readonly adjustmentError = signal<string | null>(null);
+  protected readonly playbackPositionMs = signal(0);
   protected readonly activeLineIndex = signal(-1);
   protected readonly following = signal(true);
   protected readonly synchronized = computed(() => {
@@ -101,6 +102,7 @@ export class LyricsPanelComponent implements OnDestroy {
           track.durationMs,
           Math.max(0, this.playback.currentPositionSeconds() * 1_000),
         );
+        this.playbackPositionMs.set(playbackMs);
         const nextIndex = findActiveLyricLine(
           lyrics.lines,
           playbackMs + this.adjustmentMs(),
@@ -179,6 +181,15 @@ export class LyricsPanelComponent implements OnDestroy {
     if (value === 0) return 'Sin ajuste';
     const seconds = Math.abs(value / 1_000).toFixed(1);
     return `${value > 0 ? '+' : '−'}${seconds} s`;
+  }
+
+  protected wordProgress(word: NonNullable<LyricLine['words']>[number]): number {
+    const positionMs = this.playbackPositionMs() + this.adjustmentMs();
+    if (positionMs <= word.startMs) return 0;
+    if (word.endMs === null || word.endMs <= word.startMs) return 100;
+    return Math.min(100, Math.max(0,
+      ((positionMs - word.startMs) / (word.endMs - word.startMs)) * 100,
+    ));
   }
 
   private scheduleActiveLineScroll(): void {

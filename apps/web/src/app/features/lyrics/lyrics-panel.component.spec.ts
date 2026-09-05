@@ -141,4 +141,27 @@ describe('LyricsPanelComponent', () => {
     expect(request.request.body).toEqual({ adjustmentMs: 100 });
     request.flush({ adjustmentMs: 100 });
   });
+
+  it('progressively fills a timed word within the current line', () => {
+    const fixture = TestBed.createComponent(LyricsPanelComponent);
+    fixture.componentRef.setInput('track', track);
+    fixture.componentRef.setInput('open', true);
+    fixture.detectChanges();
+    TestBed.inject(HttpTestingController).expectOne('/api/music/tracks/track-a/lyrics').flush({
+      adjustmentMs: 0,
+      lyrics: [{
+        displayArtist: null, displayTitle: null, language: 'es', synced: true,
+        lines: [{
+          startMs: 2_000, endMs: 3_000, text: 'Segunda línea',
+          words: [{ startMs: 2_000, endMs: 3_000, text: 'Segunda línea' }],
+        }],
+      }],
+    });
+    fixture.detectChanges();
+    vi.advanceTimersByTime(101);
+    fixture.detectChanges();
+
+    const word = fixture.nativeElement.querySelector('.lyrics-word') as HTMLElement;
+    expect(word.style.getPropertyValue('--word-progress')).toBe('50%');
+  });
 });

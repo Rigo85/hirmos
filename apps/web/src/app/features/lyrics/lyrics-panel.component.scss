@@ -115,6 +115,26 @@
   transform: translateX(5px);
 }
 
+.lyrics-word {
+  --word-progress: 0%;
+  color: transparent;
+  background: linear-gradient(90deg,
+    var(--accent-bright) 0 var(--word-progress),
+    #777d87 var(--word-progress) 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+
+.lyrics-line--past .lyrics-word {
+  background: none;
+  color: #666c75;
+}
+
+.lyrics-line:not(.lyrics-line--active, .lyrics-line--past) .lyrics-word {
+  background: none;
+  color: #777d87;
+}
+
 .lyrics-line--plain {
   padding: 0 0 18px;
   color: #d6d2c9;

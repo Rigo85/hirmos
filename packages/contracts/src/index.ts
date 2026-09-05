@@ -230,9 +230,16 @@ export type TrackListResponse = z.infer<typeof trackListResponseSchema>;
 export const genreListResponseSchema = z.object({ genres: z.array(genreSchema) });
 export type GenreListResponse = z.infer<typeof genreListResponseSchema>;
 
+export const lyricWordSchema = z.object({
+  startMs: z.number().int().nonnegative(),
+  endMs: z.number().int().nonnegative().nullable(),
+  text: z.string(),
+});
 export const lyricLineSchema = z.object({
   startMs: z.number().int().nonnegative().nullable(),
+  endMs: z.number().int().nonnegative().nullable().optional(),
   text: z.string(),
+  words: z.array(lyricWordSchema).optional(),
 });
 export const lyricsDocumentSchema = z.object({
   displayArtist: z.string().nullable(),

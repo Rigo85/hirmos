@@ -79,7 +79,12 @@ export interface SourceLyrics {
   displayTitle: string | null;
   language: string | null;
   synced: boolean;
-  lines: Array<{ startMs: number | null; text: string }>;
+  lines: Array<{
+    startMs: number | null;
+    endMs?: number | null;
+    text: string;
+    words?: Array<{ startMs: number; endMs: number | null; text: string }>;
+  }>;
 }
 
 export interface MusicSourceAdapter {

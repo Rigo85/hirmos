@@ -7,7 +7,7 @@ interface CacheRow {
   display_title: string | null;
   language: string | null;
   synced: boolean;
-  lines: Array<{ startMs: number | null; text: string }>;
+  lines: SourceLyrics['lines'];
 }
 
 export class LyricsRepository {

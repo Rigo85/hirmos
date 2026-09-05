@@ -27,7 +27,7 @@ export class MusicSourceService {
     private readonly adapters: MusicSourceAdapterFactory = new DefaultMusicSourceAdapterFactory(),
     private readonly activity?: ActivityRepository,
     private readonly lyricsRepository?: LyricsRepository,
-    private readonly lyricsProvider?: LyricsProvider,
+    private readonly lyricsProviders: readonly LyricsProvider[] = [],
     private readonly catalog?: CatalogRepository,
   ) {}
 
@@ -232,30 +232,31 @@ export class MusicSourceService {
     const adjustmentMs = await this.lyricsRepository?.getAdjustment(
       userId, source.id, remoteId,
     ) ?? 0;
-    if (this.lyricsProvider && this.lyricsRepository) {
+    if (this.lyricsProviders.length && this.lyricsRepository) {
       const track = await adapter.getTrack(remoteId, signal);
       const fingerprint = lyricsFingerprint(track);
-      const cached = await this.lyricsRepository.get({
-        sourceId: source.id, remoteTrackId: remoteId,
-        provider: this.lyricsProvider.name, fingerprint,
-      });
-      if (cached?.length) return { lyrics: cached, adjustmentMs };
-      if (cached === undefined) {
+      for (const provider of this.lyricsProviders) {
+        const cached = await this.lyricsRepository.get({
+          sourceId: source.id, remoteTrackId: remoteId,
+          provider: provider.name, fingerprint,
+        });
+        if (cached?.length) return { lyrics: cached, adjustmentMs };
+        if (cached !== undefined) continue;
         try {
           const providerSignal = signal
-            ? AbortSignal.any([signal, AbortSignal.timeout(8_000)])
-            : AbortSignal.timeout(8_000);
-          const found = await this.lyricsProvider.find(track, providerSignal);
+            ? AbortSignal.any([signal, AbortSignal.timeout(provider.timeoutMs ?? 8_000)])
+            : AbortSignal.timeout(provider.timeoutMs ?? 8_000);
+          const found = await provider.find(track, providerSignal);
           await this.lyricsRepository.put({
             sourceId: source.id, remoteTrackId: remoteId,
-            provider: this.lyricsProvider.name, fingerprint,
+            provider: provider.name, fingerprint,
             providerItemId: found?.providerItemId,
             instrumental: found?.instrumental,
             document: found?.document ?? null,
           });
           if (found) return { lyrics: [found.document], adjustmentMs };
         } catch {
-          // Public providers are best-effort; the source remains the reliable fallback.
+          // Public providers are best-effort; continue through the configured chain.
         }
       }
     }

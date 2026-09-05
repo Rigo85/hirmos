@@ -52,7 +52,18 @@
               [attr.aria-current]="$index === activeLineIndex() ? 'true' : null"
               [attr.aria-label]="'Ir a ' + line.text"
               (click)="seekToLine(line)"
-            >{{ line.text || ' ' }}</button>
+            >
+              @if (line.words?.length) {
+                @for (word of line.words; track $index) {
+                  <span
+                    class="lyrics-word"
+                    [style.--word-progress]="wordProgress(word) + '%'"
+                  >{{ word.text }}</span>
+                }
+              } @else {
+                {{ line.text || ' ' }}
+              }
+            </button>
           } @else {
             <p class="lyrics-line lyrics-line--plain">{{ line.text || ' ' }}</p>
           }

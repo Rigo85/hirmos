@@ -20,6 +20,7 @@ import { ActivityRepository } from './activity/activity-repository.js';
 import { CatalogRepository } from './activity/catalog-repository.js';
 import { LyricsRepository } from './lyrics/lyrics-repository.js';
 import { LrclibLyricsProvider } from './lyrics/lrclib-lyrics-provider.js';
+import { AmllLyricsProvider } from './lyrics/amll-lyrics-provider.js';
 
 const config = loadConfig();
 const database = config.DATABASE_URL ? createDatabase(config.DATABASE_URL) : null;
@@ -47,7 +48,7 @@ const musicSourceService = database && config.DATA_ENCRYPTION_KEY
       undefined,
       activityRepository,
       new LyricsRepository(database),
-      new LrclibLyricsProvider(),
+      [new AmllLyricsProvider(), new LrclibLyricsProvider()],
       new CatalogRepository(database),
     )
   : undefined;

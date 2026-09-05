@@ -6,6 +6,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "sourceMap": true,
+    "skipLibCheck": true,
     "target": "ES2023",
     "types": ["node"]
   },
