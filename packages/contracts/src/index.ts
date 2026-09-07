@@ -224,6 +224,16 @@ export const libraryHomeResponseSchema = z.object({
 });
 export type LibraryHomeResponse = z.infer<typeof libraryHomeResponseSchema>;
 
+export const libraryStatsResponseSchema = z.object({
+  artists: z.number().int().nonnegative(),
+  albums: z.number().int().nonnegative(),
+  tracks: z.number().int().nonnegative(),
+  genres: z.number().int().nonnegative(),
+  ready: z.boolean(),
+  syncedAt: z.iso.datetime().nullable(),
+});
+export type LibraryStatsResponse = z.infer<typeof libraryStatsResponseSchema>;
+
 export const albumListResponseSchema = z.object({
   albums: z.array(albumSchema),
   nextCursor: z.string().nullable(),
@@ -241,6 +251,13 @@ export const trackListResponseSchema = z.object({
   nextCursor: z.string().nullable(),
 });
 export type TrackListResponse = z.infer<typeof trackListResponseSchema>;
+
+export const resolveTracksRequestSchema = z.object({
+  references: z.array(z.string().min(1).max(2048)).min(1).max(500),
+});
+export type ResolveTracksRequest = z.infer<typeof resolveTracksRequestSchema>;
+export const resolveTracksResponseSchema = z.object({ tracks: z.array(trackSchema) });
+export type ResolveTracksResponse = z.infer<typeof resolveTracksResponseSchema>;
 
 export const favoriteTrackRequestSchema = z.object({ favorite: z.boolean() });
 export type FavoriteTrackRequest = z.infer<typeof favoriteTrackRequestSchema>;
@@ -281,6 +298,7 @@ export const lyricsDocumentSchema = z.object({
 export const lyricsResponseSchema = z.object({
   lyrics: z.array(lyricsDocumentSchema),
   adjustmentMs: z.number().int().min(-30_000).max(30_000),
+  availability: z.enum(['available', 'not_found', 'temporarily_unavailable']),
 });
 export type LyricsResponse = z.infer<typeof lyricsResponseSchema>;
 export const lyricsAdjustmentRequestSchema = z.object({

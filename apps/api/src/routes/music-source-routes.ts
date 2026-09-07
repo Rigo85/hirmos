@@ -5,11 +5,13 @@ import {
   configureMusicSourceRequestSchema,
   favoriteTrackRequestSchema,
   lyricsAdjustmentRequestSchema,
+  resolveTracksRequestSchema,
 } from '@hirmos/contracts';
 import {
   MusicSourceService,
   MusicSourceUnavailableError,
 } from '../music-source/music-source-service.js';
+import { ImageCachePendingError } from '../cache/image-cache-service.js';
 import { requireAdmin, requireAuthentication } from './auth-routes.js';
 
 export async function registerMusicSourceRoutes(
@@ -201,6 +203,13 @@ export async function registerMusicSourceRoutes(
       service.albums(sort, parseLimit(query.limit), query.cursor, year));
   });
 
+  app.get('/api/library/stats', async (request, reply) => {
+    const denied = requireAuthentication(request, reply);
+    if (denied) return denied;
+    if (!service) return notConfigured(request, reply);
+    return libraryResponse(request, reply, () => service.libraryStats());
+  });
+
   app.get('/api/library/artists', async (request, reply) => {
     const denied = requireAuthentication(request, reply);
     if (denied) return denied;
@@ -337,13 +346,35 @@ export async function registerMusicSourceRoutes(
     }
   });
 
+  app.post('/api/music/tracks/resolve', async (request, reply) => {
+    const denied = requireAuthentication(request, reply);
+    if (denied) return denied;
+    if (!service) return notConfigured(request, reply);
+    const parsed = resolveTracksRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        code: 'INVALID_TRACK_REFERENCES',
+        message: 'La lista de canciones no es válida.',
+        requestId: request.id,
+      });
+    }
+    return libraryResponse(request, reply, () => service.tracksByReferences(
+      request.authSession!.response.user.id, parsed.data.references,
+    ));
+  });
+
   app.get('/api/music/covers/:reference', async (request, reply) => {
     const denied = requireAuthentication(request, reply);
     if (denied) return denied;
     if (!service) return notConfigured(request, reply);
     const { reference } = request.params as { reference: string };
+    const { size: requestedSize } = request.query as { size?: string };
+    const size = parseCoverSize(requestedSize);
     try {
-      const media = await service.cover(reference, AbortSignal.timeout(15_000));
+      const media = await service.cover(reference, size, AbortSignal.timeout(15_000));
+      if (media.etag && request.headers['if-none-match'] === media.etag) {
+        return reply.code(304).header('etag', media.etag).send();
+      }
       return sendMedia(reply, media, 'private, max-age=86400');
     } catch (error) {
       return mediaFailure(request, reply, error);
@@ -420,6 +451,12 @@ function parseLimit(value: string | undefined, maximum = 100): number {
   return Number.isSafeInteger(parsed) ? Math.min(maximum, Math.max(1, parsed)) : 50;
 }
 
+function parseCoverSize(value: string | undefined): number {
+  const requested = Number.parseInt(value ?? '320', 10);
+  const sizes = [64, 128, 320, 640];
+  return sizes.includes(requested) ? requested : 320;
+}
+
 function sendMedia(
   reply: FastifyReply,
   media: Awaited<ReturnType<MusicSourceService['stream']>>,
@@ -432,6 +469,7 @@ function sendMedia(
   if (media.contentLength) reply.header('content-length', media.contentLength);
   if (media.contentRange) reply.header('content-range', media.contentRange);
   if (media.acceptRanges) reply.header('accept-ranges', media.acceptRanges);
+  if (media.etag) reply.header('etag', media.etag);
   return reply.send(Readable.fromWeb(
     media.body as unknown as NodeReadableStream<Uint8Array>,
     { signal },
@@ -448,6 +486,17 @@ function mediaFailure(
   reply: FastifyReply,
   error: unknown,
 ): FastifyReply {
+  if (error instanceof ImageCachePendingError) {
+    return reply
+      .code(503)
+      .header('cache-control', 'private, no-store')
+      .header('retry-after', String(Math.max(1, Math.ceil(error.retryAfterMs / 1_000))))
+      .send({
+        code: 'MEDIA_PENDING',
+        message: 'La imagen se está preparando. Reintentaremos en breve.',
+        requestId: request.id,
+      });
+  }
   if (error instanceof MusicSourceUnavailableError) {
     return reply.code(404).send({
       code: 'MEDIA_NOT_FOUND',

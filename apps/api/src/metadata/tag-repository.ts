@@ -1,5 +1,6 @@
 import type { Database } from '../db/database.js';
 import type { TagEvidence } from './tag-provider.js';
+import { createHash } from 'node:crypto';
 
 interface EvidenceRow {
   provider: TagEvidence['provider'];
@@ -42,6 +43,29 @@ export class TagRepository {
     return result.rows.map(mapEvidence);
   }
 
+  public async staleArtistEvidence(
+    sourceId: string,
+    remoteArtistId: string,
+    provider: 'musicbrainz' | 'lastfm',
+  ): Promise<TagEvidence[] | undefined> {
+    const cached = await this.db.query<{ present: boolean }>(
+      `SELECT true AS present
+         FROM metadata_provider_cache
+        WHERE source_id = $1 AND entity_type = 'artist' AND remote_entity_id = $2
+          AND provider = $3`,
+      [sourceId, remoteArtistId, provider],
+    );
+    if (!cached.rows[0]) return undefined;
+    const result = await this.db.query<EvidenceRow>(
+      `SELECT provider, raw_name, normalized_name, category, score
+         FROM metadata_tag_evidence
+        WHERE source_id = $1 AND entity_type = 'artist' AND remote_entity_id = $2
+          AND provider = $3`,
+      [sourceId, remoteArtistId, provider],
+    );
+    return result.rows.map(mapEvidence);
+  }
+
   public async putArtistEvidence(
     sourceId: string,
     remoteArtistId: string,
@@ -49,6 +73,33 @@ export class TagRepository {
     evidence: TagEvidence[],
     ttlHours: number,
   ): Promise<void> {
+    const canonicalEvidence = evidence.map((item) => ({
+      raw_name: item.rawName,
+      normalized_name: item.normalizedName,
+      category: item.category,
+      score: item.score,
+    })).sort((left, right) => left.raw_name.localeCompare(right.raw_name));
+    const contentHash = createHash('sha256')
+      .update(JSON.stringify(canonicalEvidence))
+      .digest('hex');
+    const current = await this.db.query<{ content_hash: string | null }>(
+      `SELECT content_hash FROM metadata_provider_cache
+        WHERE source_id = $1 AND entity_type = 'artist' AND remote_entity_id = $2
+          AND provider = $3`,
+      [sourceId, remoteArtistId, provider],
+    );
+    if (current.rows[0]?.content_hash === contentHash) {
+      await this.db.query(
+        `UPDATE metadata_provider_cache
+            SET fetched_at = now(), validated_at = now(),
+                expires_at = now() + make_interval(hours => $4),
+                next_refresh_at = now() + make_interval(hours => $4)
+          WHERE source_id = $1 AND entity_type = 'artist' AND remote_entity_id = $2
+            AND provider = $3`,
+        [sourceId, remoteArtistId, provider, ttlHours],
+      );
+      return;
+    }
     await this.db.query(
       `DELETE FROM metadata_tag_evidence
         WHERE source_id = $1 AND entity_type = 'artist' AND remote_entity_id = $2
@@ -67,16 +118,15 @@ export class TagRepository {
            )
        )
        INSERT INTO metadata_provider_cache
-         (source_id, entity_type, remote_entity_id, provider, fetched_at, expires_at)
-       VALUES ($1, 'artist', $2, $3, now(), now() + make_interval(hours => $5))
+         (source_id, entity_type, remote_entity_id, provider, fetched_at, expires_at,
+          content_hash, validated_at, next_refresh_at)
+       VALUES ($1, 'artist', $2, $3, now(), now() + make_interval(hours => $5),
+               $6, now(), now() + make_interval(hours => $5))
        ON CONFLICT (source_id, entity_type, remote_entity_id, provider) DO UPDATE SET
-         fetched_at = now(), expires_at = EXCLUDED.expires_at`,
-      [sourceId, remoteArtistId, provider, JSON.stringify(evidence.map((item) => ({
-        raw_name: item.rawName,
-        normalized_name: item.normalizedName,
-        category: item.category,
-        score: item.score,
-      }))), ttlHours],
+         fetched_at = now(), expires_at = EXCLUDED.expires_at,
+         content_hash = EXCLUDED.content_hash, validated_at = now(),
+         next_refresh_at = EXCLUDED.next_refresh_at`,
+      [sourceId, remoteArtistId, provider, JSON.stringify(canonicalEvidence), ttlHours, contentHash],
     );
   }
 

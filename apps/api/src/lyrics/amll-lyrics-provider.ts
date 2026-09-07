@@ -1,4 +1,5 @@
 import { SaxesParser, type SaxesTagNS } from 'saxes';
+import { fetchWithRetry, type ThirdPartyTelemetry } from '../integrations/third-party-request.js';
 import type { SourceLyrics, SourceTrack } from '../music-source/music-source-adapter.js';
 import type { LyricsProvider, PublicLyricsResult } from './lyrics-provider.js';
 
@@ -44,7 +45,10 @@ export class AmllLyricsProvider implements LyricsProvider {
   public readonly name = 'amll-ttml';
   public readonly timeoutMs = 3_000;
 
-  public constructor(private readonly fetchImplementation: typeof fetch = fetch) {}
+  public constructor(
+    private readonly fetchImplementation: typeof fetch = fetch,
+    private readonly telemetry?: ThirdPartyTelemetry,
+  ) {}
 
   public async find(track: SourceTrack, signal?: AbortSignal): Promise<PublicLyricsResult | null> {
     const searchUrl = new URL('/v1/lyrics/search', AMLL_ORIGIN);
@@ -73,6 +77,11 @@ export class AmllLyricsProvider implements LyricsProvider {
       return {
         providerItemId: String(full.id),
         instrumental: false,
+        raw: {
+          content: full.lyrics,
+          contentType: 'application/ttml+xml',
+          parserVersion: 'amll-ttml-v1',
+        },
         document: {
           displayArtist: track.artist,
           displayTitle: track.title,
@@ -86,12 +95,19 @@ export class AmllLyricsProvider implements LyricsProvider {
   }
 
   private async getJson<T>(url: URL, signal?: AbortSignal): Promise<T | null> {
-    const response = await this.fetchImplementation(url, {
-      signal,
+    const response = await fetchWithRetry(this.fetchImplementation, url, {
       headers: {
         accept: 'application/json',
         'user-agent': 'Hirmos/0.1 (OpenSubsonic web player)',
       },
+    }, {
+      provider: this.name,
+      operation: url.pathname.endsWith('/search') ? 'search' : 'get',
+      signal,
+      attemptTimeoutMs: 1_200,
+      totalTimeoutMs: 2_800,
+      maxAttempts: 2,
+      telemetry: this.telemetry,
     });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`AMLL returned HTTP ${response.status}`);

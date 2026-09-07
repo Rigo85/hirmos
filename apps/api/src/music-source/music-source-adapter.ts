@@ -38,6 +38,7 @@ export interface SourceAlbum {
   favorite: boolean;
   playCount: number | null;
   lastPlayedAt: string | null;
+  createdAt?: string | null;
 }
 
 export interface SourceGenre {
@@ -53,6 +54,8 @@ export interface SourceArtistDetail extends SourceArtist {
   externalUrl: string | null;
   similarArtists: SourceArtist[];
   topTracks: SourceTrack[];
+  externalInfoAvailable?: boolean;
+  topTracksAvailable?: boolean;
 }
 
 export interface SourceTrack {
@@ -68,6 +71,15 @@ export interface SourceTrack {
   genres: string[];
   musicBrainzId: string | null;
   favorite: boolean;
+  trackNumber?: number | null;
+  discNumber?: number | null;
+  bitRate?: number | null;
+  bitDepth?: number | null;
+  samplingRate?: number | null;
+  channelCount?: number | null;
+  bpm?: number | null;
+  replayGain?: Record<string, number> | null;
+  createdAt?: string | null;
 }
 
 export interface SourceMedia {
@@ -77,6 +89,7 @@ export interface SourceMedia {
   contentLength: string | null;
   contentRange: string | null;
   acceptRanges: string | null;
+  etag?: string | null;
 }
 
 export interface SourceLyrics {
@@ -106,7 +119,7 @@ export interface MusicSourceAdapter {
   getAlbum(albumId: string, signal?: AbortSignal): Promise<SourceAlbumDetail>;
   getArtist(artistId: string, signal?: AbortSignal): Promise<SourceArtistDetail>;
   getStream(trackId: string, range?: string, signal?: AbortSignal): Promise<SourceMedia>;
-  getCoverArt(coverArtId: string, signal?: AbortSignal): Promise<SourceMedia>;
+  getCoverArt(coverArtId: string, size?: number, signal?: AbortSignal): Promise<SourceMedia>;
   getLyrics(trackId: string, signal?: AbortSignal): Promise<SourceLyrics[]>;
   getTrack(trackId: string, signal?: AbortSignal): Promise<SourceTrack>;
 }

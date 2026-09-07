@@ -4,6 +4,7 @@ import type {
   ClientToServerEvents,
   PlaybackCommandResult,
   PlaybackSnapshot,
+  ResolveTracksResponse,
   ServerToClientEvents,
   Track,
 } from '@hirmos/contracts';
@@ -315,15 +316,50 @@ export class PlaybackSyncService {
     const references = [snapshot.currentTrackRef, ...snapshot.queue.map((item) => item.trackRef)]
       .filter((reference): reference is string => Boolean(reference));
     const unique = [...new Set(references)];
-    for (let index = 0; index < unique.length; index += 4) {
-      await Promise.all(unique.slice(index, index + 4).map((reference) => this.loadTrack(reference)));
-    }
+    await this.loadTracks(unique);
+    if (this.snapshot()?.revision !== snapshot.revision) return;
     this.queueTracks.set(Object.fromEntries(
       snapshot.queue.flatMap((item) => {
         const track = this.tracks.get(item.trackRef);
         return track ? [[item.trackRef, track]] : [];
       }),
     ));
+  }
+
+  private async loadTracks(references: string[]): Promise<void> {
+    const pending: Promise<Track | null>[] = [];
+    const missing: string[] = [];
+    for (const reference of references) {
+      if (this.tracks.has(reference)) continue;
+      const existing = this.trackLoads.get(reference);
+      if (existing) pending.push(existing);
+      else missing.push(reference);
+    }
+    if (missing.length) {
+      const batch = firstValueFrom(this.http.post<ResolveTracksResponse>(
+        '/api/music/tracks/resolve', { references: missing },
+      )).then((response) => {
+        this.rememberMany(response.tracks);
+        const tracks = new Map(response.tracks.map((track) => [track.id, track]));
+        if (tracks.size < missing.length) {
+          this.error.set('No pudimos recuperar algunas canciones de la cola.');
+        }
+        return tracks;
+      }).catch(() => {
+        this.error.set('No pudimos recuperar algunas canciones de la cola.');
+        return new Map<string, Track>();
+      });
+      for (const reference of missing) {
+        let load!: Promise<Track | null>;
+        load = batch.then((tracks) => tracks.get(reference) ?? null)
+          .finally(() => {
+            if (this.trackLoads.get(reference) === load) this.trackLoads.delete(reference);
+          });
+        this.trackLoads.set(reference, load);
+        pending.push(load);
+      }
+    }
+    await Promise.all(pending);
   }
 
   private async loadTrack(reference: string): Promise<Track | null> {
@@ -347,6 +383,16 @@ export class PlaybackSyncService {
   private remember(track: Track): void {
     this.tracks.set(track.id, track);
     this.queueTracks.set({ ...this.queueTracks(), [track.id]: track });
+  }
+
+  private rememberMany(tracks: Track[]): void {
+    if (!tracks.length) return;
+    const additions: Record<string, Track> = {};
+    for (const track of tracks) {
+      this.tracks.set(track.id, track);
+      additions[track.id] = track;
+    }
+    this.queueTracks.set({ ...this.queueTracks(), ...additions });
   }
 
   private registerMediaSession(): void {

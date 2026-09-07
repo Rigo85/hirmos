@@ -35,7 +35,7 @@
     <div class="habit-grid">
       @for (artist of artists(); track artist.id) {
         <a class="habit-detail-card habit-detail-card--artist" [routerLink]="['/artists', artist.id]">
-          @if (artist.coverUrl) { <img loading="lazy" decoding="async" [src]="artist.coverUrl" [alt]="artist.name"> }
+          @if (artist.coverUrl) { <img [appLazyCover]="artist.coverUrl" [coverSize]="320" [alt]="artist.name"> }
           @else { <span>{{ artist.name.slice(0, 2).toUpperCase() }}</span> }
           <div><strong>{{ artist.name }}</strong><small>{{ metric(artist) }}</small><em>{{ artist.trackCount }} {{ artist.trackCount === 1 ? 'canción distinta' : 'canciones distintas' }}</em></div>
         </a>
@@ -48,7 +48,7 @@
       @for (album of albums(); track album.id || album.name) {
         @if (album.id) {
           <a class="habit-detail-card" [routerLink]="['/albums', album.id]">
-            <span class="habit-detail-cover">@if (album.coverUrl) { <img loading="lazy" decoding="async" [src]="album.coverUrl" [alt]="album.name"> } @else { <b>{{ album.name.slice(0, 2).toUpperCase() }}</b> }</span>
+            <span class="habit-detail-cover">@if (album.coverUrl) { <img [appLazyCover]="album.coverUrl" [coverSize]="128" [alt]="album.name"> } @else { <b>{{ album.name.slice(0, 2).toUpperCase() }}</b> }</span>
             <div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small><em>{{ metric(album) }}</em></div>
           </a>
         }

@@ -1,4 +1,5 @@
 import type { SourceTrack } from '../music-source/music-source-adapter.js';
+import { fetchWithRetry, type ThirdPartyTelemetry } from '../integrations/third-party-request.js';
 import type { LyricsProvider, PublicLyricsResult } from './lyrics-provider.js';
 
 interface LrclibResponse {
@@ -13,7 +14,10 @@ interface LrclibResponse {
 export class LrclibLyricsProvider implements LyricsProvider {
   public readonly name = 'lrclib';
 
-  public constructor(private readonly fetchImplementation: typeof fetch = fetch) {}
+  public constructor(
+    private readonly fetchImplementation: typeof fetch = fetch,
+    private readonly telemetry?: ThirdPartyTelemetry,
+  ) {}
 
   public async find(track: SourceTrack, signal?: AbortSignal): Promise<PublicLyricsResult | null> {
     const url = new URL('https://lrclib.net/api/get');
@@ -23,12 +27,19 @@ export class LrclibLyricsProvider implements LyricsProvider {
       album_name: track.album,
       duration: String(Math.max(0, Math.round(track.durationMs / 1_000))),
     }).toString();
-    const response = await this.fetchImplementation(url, {
-      signal,
+    const response = await fetchWithRetry(this.fetchImplementation, url, {
       headers: {
         accept: 'application/json',
         'user-agent': 'Hirmos/0.1 (OpenSubsonic web player)',
       },
+    }, {
+      provider: this.name,
+      operation: 'get',
+      signal,
+      attemptTimeoutMs: 2_500,
+      totalTimeoutMs: 6_500,
+      maxAttempts: 2,
+      telemetry: this.telemetry,
     });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`LRCLIB returned HTTP ${response.status}`);
@@ -42,6 +53,11 @@ export class LrclibLyricsProvider implements LyricsProvider {
     return {
       providerItemId: lyrics.id === undefined ? null : String(lyrics.id),
       instrumental: Boolean(lyrics.instrumental),
+      raw: {
+        content: JSON.stringify(lyrics),
+        contentType: 'application/json',
+        parserVersion: 'lrclib-json-v1',
+      },
       document: {
         displayArtist: lyrics.artistName ?? track.artist,
         displayTitle: lyrics.trackName ?? track.title,

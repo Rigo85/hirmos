@@ -3,6 +3,7 @@ import { Component, input } from '@angular/core';
 export type AppIconName =
   | 'arrow-left'
   | 'arrow-right'
+  | 'chevron-down'
   | 'close'
   | 'device'
   | 'home'
@@ -34,6 +35,9 @@ export type AppIconName =
         }
         @case ('arrow-right') {
           <path d="m9.5 6 6 6-6 6" />
+        }
+        @case ('chevron-down') {
+          <path d="m6 9 6 6 6-6" />
         }
         @case ('home') {
           <path d="M3.5 10.7 12 3.8l8.5 6.9" />
@@ -91,8 +95,8 @@ export type AppIconName =
           <path d="M4 10v4h3.3l4.2 3.6V6.4L7.3 10zM15.3 8.8a4.6 4.6 0 0 1 0 6.4M17.9 6.5a7.8 7.8 0 0 1 0 11" />
         }
         @case ('lyrics') {
-          <path d="M6 5.3h9.2M6 9.2h12M6 13.1h8.4M6 17h5.5" />
-          <path d="M18 13.7v4.2a2.3 2.3 0 1 1-1.4-2.1l1.4.4" />
+          <rect x="8.6" y="2.7" width="6.8" height="13" rx="3.4" />
+          <path d="M5.2 10.8v1.1a6.8 6.8 0 0 0 13.6 0v-1.1M12 18.7v2.6M8.6 21.3h6.8" />
         }
         @case ('users') {
           <circle cx="9" cy="8.2" r="3.1" /><path d="M3.8 19.2v-1.1A5.2 5.2 0 0 1 9 12.9a5.2 5.2 0 0 1 5.2 5.2v1.1M16.2 10.8a2.6 2.6 0 1 0-1.7-4.6M16.8 13.2a4.4 4.4 0 0 1 3.4 4.3v.9" />

@@ -6,8 +6,9 @@ import type { SearchResponse, Track } from '@hirmos/contracts';
 import { firstValueFrom } from 'rxjs';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { TrackRowComponent } from '../../shared/track-row.component';
+import { LazyCoverDirective } from '../../shared/lazy-cover.directive';
 
-@Component({ selector: 'app-search', imports: [RouterLink, TrackRowComponent], templateUrl: './search.component.html' })
+@Component({ selector: 'app-search', imports: [RouterLink, TrackRowComponent, LazyCoverDirective], templateUrl: './search.component.html' })
 export class SearchComponent {
   private readonly http = inject(HttpClient);
   private readonly route = inject(ActivatedRoute);

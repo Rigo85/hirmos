@@ -7,10 +7,11 @@ import { firstValueFrom } from 'rxjs';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { AppIconComponent } from '../../shared/app-icon.component';
 import { TrackRowComponent } from '../../shared/track-row.component';
+import { LazyCoverDirective } from '../../shared/lazy-cover.directive';
 
 @Component({
   selector: 'app-genre',
-  imports: [RouterLink, AppIconComponent, TrackRowComponent],
+  imports: [RouterLink, AppIconComponent, TrackRowComponent, LazyCoverDirective],
   templateUrl: './genre.component.html',
 })
 export class GenreComponent {

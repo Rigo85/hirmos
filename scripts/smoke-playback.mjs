@@ -41,10 +41,15 @@ try {
     commandId: randomUUID(), expectedRevision: result.snapshot.revision, trackRef: tracks[0].id,
   });
   assertAccepted(result, 'first selection');
-  result = await command(first, 'playback:select', {
+  const leaseEpochBeforeRemoteSelection = result.snapshot.leaseEpoch;
+  result = await command(second, 'playback:select', {
     commandId: randomUUID(), expectedRevision: result.snapshot.revision, trackRef: tracks[1].id,
   });
-  assertAccepted(result, 'second selection');
+  assertAccepted(result, 'remote selection');
+  if (result.snapshot.activeDeviceId !== firstId
+      || result.snapshot.leaseEpoch !== leaseEpochBeforeRemoteSelection) {
+    throw new Error('Remote selection transferred the active player lease');
+  }
   if (result.snapshot.queue.length < 2) throw new Error('Queue was not persisted');
 
   result = await command(second, 'playback:control', {
@@ -106,7 +111,8 @@ try {
     status: 'ok',
     checks: [
       'single-user-thread', 'exclusive-lease', 'persistent-queue',
-      'remote-pause', 'remote-seek', 'previous', 'lease-transfer',
+      'remote-selection-preserves-lease', 'remote-pause', 'remote-seek',
+      'previous', 'lease-transfer',
       'old-owner-rejected', 'queue-removal', 'explicit-conflict', 'idempotency',
     ],
   }));

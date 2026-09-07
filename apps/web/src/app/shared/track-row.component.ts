@@ -5,10 +5,11 @@ import type { Track } from '@hirmos/contracts';
 import { PlaybackSyncService } from '../core/playback-sync.service';
 import { FavoritesService } from '../core/favorites.service';
 import { AppIconComponent } from './app-icon.component';
+import { LazyCoverDirective } from './lazy-cover.directive';
 
 @Component({
   selector: 'li[appTrackRow]',
-  imports: [RouterLink, DecimalPipe, AppIconComponent],
+  imports: [RouterLink, DecimalPipe, AppIconComponent, LazyCoverDirective],
   host: {
     class: 'track-row',
     '[class.track-row--current]': 'isCurrent()',
@@ -19,7 +20,7 @@ import { AppIconComponent } from './app-icon.component';
     <button class="track-row__play" type="button" (click)="activate()" [attr.aria-label]="actionLabel()">
       @if (showCover()) {
         <span class="track-cover-control">
-          @if (track().coverUrl) { <img class="mini-cover" [src]="track().coverUrl" alt=""> }
+          @if (track().coverUrl) { <img class="mini-cover" [appLazyCover]="track().coverUrl!" [coverSize]="128" alt=""> }
           @else { <span class="mini-cover">♫</span> }
           <app-icon [name]="isPlaying() ? 'pause' : 'play'" />
         </span>

@@ -13,9 +13,9 @@
         }
       </section>
     }
-    <section class="music-section"><div class="section-heading"><h2>Discografía</h2></div><div class="album-grid album-grid--five">@for (album of item.albums; track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img loading="lazy" decoding="async" [src]="album.coverUrl" alt=""> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.year || 'Año desconocido' }}</small></a> }</div></section>
+    <section class="music-section"><div class="section-heading"><h2>Discografía</h2></div><div class="album-grid album-grid--five">@for (album of item.albums; track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img [appLazyCover]="album.coverUrl" [coverSize]="320" alt=""> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.year || 'Año desconocido' }}</small></a> }</div></section>
     @if (item.similarArtists.length) {
-      <section class="music-section"><div class="section-heading"><div><p class="eyebrow">PARA SEGUIR EXPLORANDO</p><h2>Artistas relacionados</h2></div></div><div class="artist-grid artist-grid--related">@for (related of item.similarArtists; track related.id) { <a class="artist-card" [routerLink]="['/artists', related.id]">@if (related.coverUrl) { <img loading="lazy" decoding="async" [src]="related.coverUrl" [alt]="related.name"> } @else { <span>{{ related.name.slice(0, 2).toUpperCase() }}</span> }<strong>{{ related.name }}</strong></a> }</div></section>
+      <section class="music-section"><div class="section-heading"><div><p class="eyebrow">PARA SEGUIR EXPLORANDO</p><h2>Artistas relacionados</h2></div></div><div class="artist-grid artist-grid--related">@for (related of item.similarArtists; track related.id) { <a class="artist-card" [routerLink]="['/artists', related.id]">@if (related.coverUrl) { <img [appLazyCover]="related.coverUrl" [coverSize]="320" [alt]="related.name"> } @else { <span>{{ related.name.slice(0, 2).toUpperCase() }}</span> }<strong>{{ related.name }}</strong></a> }</div></section>
     }
   }
 </div>

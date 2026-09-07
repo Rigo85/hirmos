@@ -8,8 +8,9 @@ import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { SessionStore } from '../../core/session.store';
 import { AppIconComponent } from '../../shared/app-icon.component';
 import { TrackRowComponent } from '../../shared/track-row.component';
+import { LazyCoverDirective } from '../../shared/lazy-cover.directive';
 
-@Component({ selector: 'app-home', imports: [RouterLink, AppIconComponent, TrackRowComponent], templateUrl: './home.component.html' })
+@Component({ selector: 'app-home', imports: [RouterLink, AppIconComponent, TrackRowComponent, LazyCoverDirective], templateUrl: './home.component.html' })
 export class HomeComponent {
   private readonly http = inject(HttpClient);
   protected readonly sessionStore = inject(SessionStore);

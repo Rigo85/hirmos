@@ -33,6 +33,7 @@ export class LyricsPanelComponent implements OnDestroy {
   private adjustmentSave: Subscription | null = null;
 
   public readonly open = input(false);
+  public readonly mobileFullscreen = input(false);
   public readonly track = input<Track | null>(null);
   public readonly closed = output<void>();
 
@@ -78,7 +79,11 @@ export class LyricsPanelComponent implements OnDestroy {
           this.lyricsDocument.set(selected);
           this.adjustmentMs.set(response.adjustmentMs);
           this.loading.set(false);
-          if (!selected) this.error.set('Esta canción no tiene letra disponible.');
+          if (!selected) {
+            this.error.set(response.availability === 'temporarily_unavailable'
+              ? 'No pudimos consultar todas las fuentes de letra. Intenta nuevamente.'
+              : 'Esta canción no tiene letra disponible.');
+          }
         },
         error: () => {
           this.loading.set(false);

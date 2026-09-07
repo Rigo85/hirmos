@@ -1,21 +1,22 @@
-<div class="app-shell" [class.queue-visible]="queueOpen()" [class.app-shell--sidebar-collapsed]="sidebarCollapsed()">
-  <aside class="sidebar" [class.sidebar--open]="mobileMenuOpen()">
-    <div class="sidebar__header"><a class="brand" routerLink="/" aria-label="Hirmos, inicio"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand__name">Hirmos</span></a><button class="sidebar-collapse" type="button" (click)="toggleSidebar()" [attr.aria-label]="sidebarCollapsed() ? 'Expandir menú lateral' : 'Contraer menú lateral'" [attr.title]="sidebarCollapsed() ? 'Expandir menú' : 'Contraer menú'"><app-icon [name]="sidebarCollapsed() ? 'panel-open' : 'panel-close'" /></button></div>
+<div class="app-shell" [class.queue-visible]="queueOpen()" [class.app-shell--sidebar-collapsed]="sidebarCollapsed()" [class.mobile-player-visible]="mobilePlayerOpen()">
+  <aside id="primary-sidebar" class="sidebar" [class.sidebar--open]="mobileMenuOpen()">
+    <div class="sidebar__header"><a class="brand" routerLink="/" (click)="closeMobileMenu()" aria-label="Hirmos, inicio"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand__name">Hirmos</span></a><button class="sidebar-collapse" type="button" (click)="toggleSidebar()" [attr.aria-label]="sidebarCollapsed() ? 'Expandir menú lateral' : 'Contraer menú lateral'" [attr.title]="sidebarCollapsed() ? 'Expandir menú' : 'Contraer menú'"><app-icon [name]="sidebarCollapsed() ? 'panel-open' : 'panel-close'" /></button><button class="sidebar-mobile-close" type="button" (click)="closeMobileMenu()" aria-label="Cerrar menú"><app-icon name="close" /></button></div>
     <nav aria-label="Navegación principal">
-      <a class="nav-link" routerLink="/" [routerLinkActiveOptions]="{exact:true}" routerLinkActive="nav-link--active" (click)="mobileMenuOpen.set(false)" [attr.title]="sidebarCollapsed() ? 'Inicio' : null"><app-icon name="home" /><span class="nav-link__label">Inicio</span></a>
-      <a class="nav-link" routerLink="/library" routerLinkActive="nav-link--active" (click)="mobileMenuOpen.set(false)" [attr.title]="sidebarCollapsed() ? 'Biblioteca' : null"><app-icon name="library" /><span class="nav-link__label">Biblioteca</span></a>
-      <a class="nav-link" routerLink="/favorites" routerLinkActive="nav-link--active" (click)="mobileMenuOpen.set(false)" [attr.title]="sidebarCollapsed() ? 'Favoritos' : null"><app-icon name="heart" /><span class="nav-link__label">Favoritos</span></a>
-      <a class="nav-link" routerLink="/search" routerLinkActive="nav-link--active" (click)="mobileMenuOpen.set(false)" [attr.title]="sidebarCollapsed() ? 'Buscar' : null"><app-icon name="search" /><span class="nav-link__label">Buscar</span></a>
+      <a class="nav-link" routerLink="/" [routerLinkActiveOptions]="{exact:true}" routerLinkActive="nav-link--active" (click)="closeMobileMenu()" [attr.title]="sidebarCollapsed() ? 'Inicio' : null"><app-icon name="home" /><span class="nav-link__label">Inicio</span></a>
+      <a class="nav-link" routerLink="/library" routerLinkActive="nav-link--active" (click)="closeMobileMenu()" [attr.title]="sidebarCollapsed() ? 'Biblioteca' : null"><app-icon name="library" /><span class="nav-link__label">Biblioteca</span></a>
+      <a class="nav-link" routerLink="/favorites" routerLinkActive="nav-link--active" (click)="closeMobileMenu()" [attr.title]="sidebarCollapsed() ? 'Favoritos' : null"><app-icon name="heart" /><span class="nav-link__label">Favoritos</span></a>
+      <a class="nav-link" routerLink="/search" routerLinkActive="nav-link--active" (click)="closeMobileMenu()" [attr.title]="sidebarCollapsed() ? 'Buscar' : null"><app-icon name="search" /><span class="nav-link__label">Buscar</span></a>
     </nav>
     @if (sessionStore.session()?.user?.role === 'admin') {
-      <div class="sidebar__admin"><p class="nav-label">ADMINISTRACIÓN</p><a class="nav-link" routerLink="/admin/users" [attr.title]="sidebarCollapsed() ? 'Invitar oyentes' : null"><app-icon name="users" /><span class="nav-link__label">Invitar oyentes</span></a><a class="nav-link" routerLink="/admin/source" [attr.title]="sidebarCollapsed() ? 'Fuente musical' : null"><app-icon name="settings" /><span class="nav-link__label">Fuente musical</span></a></div>
+      <div class="sidebar__admin"><p class="nav-label">ADMINISTRACIÓN</p><a class="nav-link" routerLink="/admin/users" (click)="closeMobileMenu()" [attr.title]="sidebarCollapsed() ? 'Invitar oyentes' : null"><app-icon name="users" /><span class="nav-link__label">Invitar oyentes</span></a><a class="nav-link" routerLink="/admin/source" (click)="closeMobileMenu()" [attr.title]="sidebarCollapsed() ? 'Fuente musical' : null"><app-icon name="settings" /><span class="nav-link__label">Fuente musical</span></a></div>
     }
-    <button class="profile-button" type="button" (click)="logout()" [attr.title]="sidebarCollapsed() ? 'Cerrar sesión' : null"><span class="avatar">{{ sessionStore.session()?.user?.displayName?.charAt(0) || 'H' }}</span><span class="profile-button__label"><strong>{{ sessionStore.session()?.user?.displayName || 'Oyente' }}</strong><small>Cerrar sesión</small></span></button>
+    <button class="profile-button" type="button" (click)="closeMobileMenu(); logout()" [attr.title]="sidebarCollapsed() ? 'Cerrar sesión' : null"><span class="avatar">{{ sessionStore.session()?.user?.displayName?.charAt(0) || 'H' }}</span><span class="profile-button__label"><strong>{{ sessionStore.session()?.user?.displayName || 'Oyente' }}</strong><small>Cerrar sesión</small></span></button>
   </aside>
+  @if (mobileMenuOpen()) { <button class="mobile-menu-backdrop" type="button" (click)="closeMobileMenu()" aria-label="Cerrar menú"></button> }
 
   <main class="main-content">
     <header class="topbar">
-      <button class="icon-button menu-button" type="button" (click)="mobileMenuOpen.set(!mobileMenuOpen())" [attr.aria-label]="mobileMenuOpen() ? 'Cerrar menú' : 'Abrir menú'" [attr.aria-expanded]="mobileMenuOpen()"><app-icon name="menu" /></button>
+      <button class="icon-button menu-button" type="button" (click)="mobileMenuOpen.set(!mobileMenuOpen())" aria-controls="primary-sidebar" [attr.aria-label]="mobileMenuOpen() ? 'Cerrar menú' : 'Abrir menú'" [attr.aria-expanded]="mobileMenuOpen()"><app-icon name="menu" /></button>
       <form class="search-box" (submit)="search($event, searchInput)"><app-icon name="search" /><input #searchInput type="search" placeholder="Artistas, álbumes o canciones" aria-label="Buscar música"><button class="search-submit" type="submit">Buscar</button></form>
       <button class="device-pill" type="button" (click)="toggleQueue()" [attr.aria-expanded]="queueOpen()"><span class="status-dot" [class.status-dot--offline]="!playback.connected()"></span>{{ playback.connected() ? (playback.ownsLease() ? 'Reproduciendo aquí' : 'Control remoto') : 'Sin conexión' }}</button>
     </header>
@@ -30,12 +31,56 @@
     @if (playback.hasActiveRemotePlayer()) { <button class="play-here" type="button" (click)="playback.claimHere()"><app-icon name="device" /><span><strong>Reproducir aquí</strong><small>Transferir desde el otro reproductor</small></span></button> }
   </aside>
 
-  <app-lyrics-panel [open]="lyricsOpen()" [track]="currentTrack()" (closed)="lyricsOpen.set(false)" />
+  <app-lyrics-panel [open]="lyricsOpen()" [mobileFullscreen]="mobilePlayerOpen()" [track]="currentTrack()" (closed)="lyricsOpen.set(false)" />
+
+  @if (mobilePlayerOpen() && currentTrack(); as track) {
+    <section #mobilePlayerDialog class="mobile-now-playing" role="dialog" aria-modal="true" aria-labelledby="mobile-now-playing-title" (keydown.tab)="trapMobilePlayerFocus($event, mobilePlayerDialog)">
+      @if (track.coverUrl) { <img class="mobile-now-playing__backdrop" [src]="track.coverUrl" alt="" aria-hidden="true"> }
+      <header class="mobile-now-playing__header" (pointerdown)="startMobilePlayerSwipe($event)" (pointerup)="finishMobilePlayerSwipe($event)">
+        <span class="mobile-now-playing__handle" aria-hidden="true"></span>
+        <button class="mobile-now-playing__close" type="button" (click)="closeMobilePlayer()" aria-label="Cerrar Reproduciendo ahora"><app-icon name="chevron-down" /></button>
+        <div><p>REPRODUCIENDO AHORA</p><span><i class="status-dot" [class.status-dot--offline]="!playback.connected()"></i>{{ playback.hasActiveRemotePlayer() ? 'Control remoto' : playback.ownsLease() ? 'Reproduciendo aquí' : 'Hilo disponible' }}</span></div>
+        <span class="mobile-now-playing__header-spacer" aria-hidden="true"></span>
+      </header>
+
+      <div class="mobile-now-playing__content">
+        <div class="mobile-now-playing__cover">
+          @if (track.coverUrl) { <img [src]="track.coverUrl" alt=""> } @else { <span>{{ track.title.slice(0, 2).toUpperCase() }}</span> }
+        </div>
+
+        <div class="mobile-now-playing__metadata">
+          <div><h2 id="mobile-now-playing-title">{{ track.title }}</h2><p>{{ track.artist }}@if (track.album) { <span aria-hidden="true"> · </span>{{ track.album }} }</p></div>
+          <button type="button" (click)="favorites.toggle(track)" [disabled]="favorites.isPending(track.id)" [class.mobile-now-playing__favorite--active]="favorites.isFavorite(track)" [attr.aria-label]="favorites.isFavorite(track) ? 'Quitar de favoritos' : 'Añadir a favoritos'" [attr.aria-pressed]="favorites.isFavorite(track)"><app-icon [name]="favorites.isFavorite(track) ? 'heart-filled' : 'heart'" /></button>
+        </div>
+
+        <div class="mobile-now-playing__progress">
+          <input type="range" min="0" [max]="track.durationMs / 1000" step="0.1" [value]="displayedPositionSeconds()" (input)="previewMobileSeek($event)" (change)="commitMobileSeek($event)" aria-label="Posición de reproducción">
+          <div><time>{{ formatTime(displayedPositionSeconds()) }}</time><time>{{ formatTime(track.durationMs / 1000) }}</time></div>
+        </div>
+
+        <div class="mobile-now-playing__controls">
+          <button type="button" aria-label="Anterior" (click)="playback.previous()"><app-icon name="previous" /></button>
+          <button class="mobile-now-playing__play" type="button" (click)="playback.toggle()" [attr.aria-label]="playback.snapshot()?.status === 'playing' ? 'Pausar' : 'Reproducir'"><app-icon [name]="playback.snapshot()?.status === 'playing' ? 'pause' : 'play'" /></button>
+          <button type="button" aria-label="Siguiente" (click)="playback.next()"><app-icon name="next" /></button>
+        </div>
+
+        <div class="mobile-now-playing__actions">
+          <button type="button" (click)="lyricsOpen.set(true); queueOpen.set(false)"><app-icon name="lyrics" /><span>Letra</span></button>
+          <button type="button" (click)="toggleQueue()"><app-icon name="queue" /><span>Cola</span></button>
+        </div>
+
+        @if (playback.hasActiveRemotePlayer()) {
+          <button class="mobile-now-playing__claim" type="button" (click)="playback.claimHere()"><app-icon name="device" /><span><strong>Reproducir aquí</strong><small>Transferir desde el otro reproductor</small></span></button>
+        }
+      </div>
+    </section>
+  }
 
   <footer class="player-bar">
+    @if (currentTrack(); as track) { <button class="mobile-player-open" type="button" (click)="openMobilePlayer()" aria-label="Abrir Reproduciendo ahora"></button><div class="mobile-player-progress" role="progressbar" aria-label="Progreso de reproducción" aria-valuemin="0" aria-valuemax="100" [attr.aria-valuenow]="mobileProgressPercent()"><span [style.width.%]="mobileProgressPercent()"></span></div> }
     <div class="player-track">@if (currentTrack()?.coverUrl) { <img class="mini-cover" [src]="currentTrack()!.coverUrl" alt=""> } @else { <span class="mini-cover cover--amber">{{ currentTrack()?.title?.slice(0, 2)?.toUpperCase() || 'HI' }}</span> }<span><strong>{{ currentTrack()?.title || 'Elige una canción' }}</strong>@if (playback.ownsLease() && (player.phase() === 'loading' || player.phase() === 'buffering')) { <small class="player-phase" role="status">Conectando audio…</small> } @else if (currentTrack(); as track) { <small class="entity-links">@if (track.artistId) { <a [routerLink]="['/artists', track.artistId]">{{ track.artist }}</a> } @else { <span>{{ track.artist }}</span> }@if (track.album) { <span aria-hidden="true">·</span>@if (track.albumId) { <a [routerLink]="['/albums', track.albumId]">{{ track.album }}</a> } @else { <span>{{ track.album }}</span> } }</small> } @else { <small>Hirmos</small> }</span>@if (currentTrack(); as track) { <button type="button" (click)="favorites.toggle(track)" [disabled]="favorites.isPending(track.id)" [attr.aria-label]="favorites.isFavorite(track) ? 'Quitar de favoritos' : 'Añadir a favoritos'" [attr.aria-pressed]="favorites.isFavorite(track)"><app-icon [name]="favorites.isFavorite(track) ? 'heart-filled' : 'heart'" /></button> }</div>
     <div class="player-controls"><div><button type="button" aria-label="Anterior" (click)="playback.previous()" [disabled]="!currentTrack()"><app-icon name="previous" /></button><button class="player-play" type="button" (click)="playback.toggle()" [disabled]="!currentTrack()" [attr.aria-label]="playback.snapshot()?.status === 'playing' ? 'Pausar' : 'Reproducir'"><app-icon [name]="playback.snapshot()?.status === 'playing' ? 'pause' : 'play'" /></button><button type="button" aria-label="Siguiente" (click)="playback.next()" [disabled]="!currentTrack()"><app-icon name="next" /></button></div><div class="progress"><time>{{ formatTime(playback.ownsLease() ? player.positionSeconds() : (playback.snapshot()?.positionMs || 0) / 1000) }}</time><input type="range" min="0" [max]="currentTrack() ? currentTrack()!.durationMs / 1000 : 0" [value]="playback.ownsLease() ? player.positionSeconds() : (playback.snapshot()?.positionMs || 0) / 1000" (change)="seekTo($event)" aria-label="Posición"><time>{{ formatTime(currentTrack() ? currentTrack()!.durationMs / 1000 : 0) }}</time></div></div>
-    <div class="player-actions"><button type="button" (click)="toggleLyrics()" [class.player-action--active]="lyricsOpen()" [attr.aria-label]="lyricsOpen() ? 'Cerrar letra' : 'Mostrar letra'" [attr.aria-pressed]="lyricsOpen()"><app-icon name="lyrics" /></button><button type="button" (click)="toggleQueue()" [class.player-action--active]="queueOpen()" [attr.aria-label]="queueOpen() ? 'Cerrar cola' : 'Mostrar cola'" [attr.aria-pressed]="queueOpen()"><app-icon name="queue" /></button><app-icon class="volume-icon" name="volume" /><input class="volume-control" type="range" min="0" max="1" step="0.05" [value]="player.volume()" (input)="changeVolume($event)" aria-label="Volumen"></div>
+    <div class="player-actions"><button class="player-action" type="button" (click)="toggleLyrics()" [class.player-action--active]="lyricsOpen()" [attr.aria-label]="lyricsOpen() ? 'Cerrar letra' : 'Mostrar letra'" [attr.aria-pressed]="lyricsOpen()"><app-icon name="lyrics" /></button><button class="player-action" type="button" (click)="toggleQueue()" [class.player-action--active]="queueOpen()" [attr.aria-label]="queueOpen() ? 'Cerrar cola' : 'Mostrar cola'" [attr.aria-pressed]="queueOpen()"><app-icon name="queue" /></button><app-icon class="volume-icon" name="volume" /><input class="volume-control" type="range" min="0" max="1" step="0.05" [value]="player.volume()" (input)="changeVolume($event)" aria-label="Volumen"></div>
   </footer>
 
   <nav class="mobile-nav" aria-label="Navegación móvil"><a routerLink="/" [routerLinkActiveOptions]="{exact:true}" routerLinkActive="active"><app-icon name="home" />Inicio</a><a routerLink="/search" routerLinkActive="active"><app-icon name="search" />Buscar</a><a routerLink="/library" routerLinkActive="active"><app-icon name="library" />Biblioteca</a><a routerLink="/favorites" routerLinkActive="active"><app-icon name="heart" />Favoritos</a><button type="button" (click)="toggleQueue()" [attr.aria-pressed]="queueOpen()"><app-icon name="queue" />Cola</button></nav>

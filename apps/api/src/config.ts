@@ -24,6 +24,10 @@ const configSchema = z.object({
   SMTP_APP_PASSWORD_FILE: z.string().optional(),
   MAIL_FROM: z.string().optional(),
   LASTFM_API_KEY: z.string().min(1).optional(),
+  HIRMOS_CACHE_DIR: z.string().min(1).optional(),
+  HIRMOS_CACHE_MAX_GB: z.coerce.number().positive().max(10_000).default(50),
+  IMAGE_CACHE_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
+  CATALOG_SYNC_INTERVAL_HOURS: z.coerce.number().positive().max(24 * 30).default(1),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

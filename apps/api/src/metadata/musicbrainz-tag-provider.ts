@@ -1,4 +1,5 @@
 import type { ArtistTagLookup, ArtistTagProvider, ProviderTag } from './tag-provider.js';
+import { fetchWithRetry, type ThirdPartyTelemetry } from '../integrations/third-party-request.js';
 
 interface MusicBrainzArtist {
   id?: string;
@@ -12,7 +13,10 @@ export class MusicBrainzTagProvider implements ArtistTagProvider {
   private nextRequestAt = 0;
   private requestQueue: Promise<unknown> = Promise.resolve();
 
-  public constructor(private readonly fetchImplementation: typeof fetch = fetch) {}
+  public constructor(
+    private readonly fetchImplementation: typeof fetch = fetch,
+    private readonly telemetry?: ThirdPartyTelemetry,
+  ) {}
 
   public async find(input: ArtistTagLookup, signal?: AbortSignal): Promise<ProviderTag[]> {
     let artistId = input.musicBrainzId;
@@ -34,16 +38,26 @@ export class MusicBrainzTagProvider implements ArtistTagProvider {
 
   private async request<T>(path: string, signal?: AbortSignal): Promise<T> {
     const queued = this.requestQueue.then(async () => {
-      const waitMs = Math.max(0, this.nextRequestAt - Date.now());
-      if (waitMs) await abortableDelay(waitMs, signal);
-      if (signal?.aborted) throw signal.reason;
-      this.nextRequestAt = Date.now() + 1_100;
-      const response = await this.fetchImplementation(new URL(path, 'https://musicbrainz.org'), {
-        signal,
+      const rateLimitedFetch: typeof fetch = async (input, init) => {
+        const waitMs = Math.max(0, this.nextRequestAt - Date.now());
+        if (waitMs) await abortableDelay(waitMs, init?.signal ?? undefined);
+        if (init?.signal?.aborted) throw init.signal.reason;
+        this.nextRequestAt = Date.now() + 1_100;
+        return this.fetchImplementation(input, init);
+      };
+      const response = await fetchWithRetry(rateLimitedFetch, new URL(path, 'https://musicbrainz.org'), {
         headers: {
           accept: 'application/json',
           'user-agent': 'Hirmos/0.1 (https://github.com/Rigo85/hirmos)',
         },
+      }, {
+        provider: this.name,
+        operation: path.includes('query=') ? 'artist-search' : 'artist-genres',
+        signal,
+        attemptTimeoutMs: 2_500,
+        totalTimeoutMs: 6_500,
+        maxAttempts: 2,
+        telemetry: this.telemetry,
       });
       if (!response.ok) throw new Error(`MusicBrainz returned HTTP ${response.status}`);
       return await response.json() as T;

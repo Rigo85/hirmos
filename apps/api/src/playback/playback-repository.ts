@@ -149,7 +149,7 @@ export class PlaybackRepository {
     await this.ensureSession(input.userId);
     const result = await this.db.query(
       `WITH candidate AS (
-         SELECT s.id
+         SELECT s.id, s.active_device_id, s.lease_epoch, s.lease_expires_at
            FROM playback_sessions s
            JOIN devices d ON d.id = $2 AND d.user_id = $1 AND d.revoked_at IS NULL
            JOIN music_sources m ON m.id = $5 AND m.enabled
@@ -177,11 +177,22 @@ export class PlaybackRepository {
          UPDATE playback_sessions s
             SET current_queue_item_id = item.id,
                 status = 'playing', position_ms = 0, position_observed_at = now(),
-                active_device_id = $2, lease_epoch = lease_epoch + 1,
-                lease_expires_at = now() + interval '${LEASE_SECONDS} seconds',
+                active_device_id = CASE
+                  WHEN candidate.active_device_id IS NULL OR
+                       candidate.lease_expires_at <= now() THEN $2
+                  ELSE candidate.active_device_id END,
+                lease_epoch = CASE
+                  WHEN candidate.active_device_id IS NULL OR
+                       candidate.lease_expires_at <= now() THEN candidate.lease_epoch + 1
+                  ELSE candidate.lease_epoch END,
+                lease_expires_at = CASE
+                  WHEN candidate.active_device_id IS NULL OR
+                       candidate.lease_expires_at <= now()
+                    THEN now() + interval '${LEASE_SECONDS} seconds'
+                  ELSE candidate.lease_expires_at END,
                 revision = revision + 1, updated_at = now()
-           FROM item
-          WHERE s.id = item.playback_session_id
+           FROM item, candidate
+          WHERE s.id = item.playback_session_id AND s.id = candidate.id
          RETURNING s.*
        )
        INSERT INTO playback_checkpoints
@@ -262,7 +273,7 @@ export class PlaybackRepository {
     await this.ensureSession(input.userId);
     const result = await this.db.query(
       `WITH candidate AS (
-         SELECT s.id
+         SELECT s.id, s.active_device_id, s.lease_epoch, s.lease_expires_at
            FROM playback_sessions s
            JOIN devices d ON d.id = $2 AND d.user_id = $1 AND d.revoked_at IS NULL
            JOIN music_sources m ON m.id = $5 AND m.enabled
@@ -304,10 +315,22 @@ export class PlaybackRepository {
          UPDATE playback_sessions s
             SET current_queue_item_id = target.id,
                 status = 'playing', position_ms = 0, position_observed_at = now(),
-                active_device_id = $2, lease_epoch = lease_epoch + 1,
-                lease_expires_at = now() + interval '${LEASE_SECONDS} seconds',
+                active_device_id = CASE
+                  WHEN candidate.active_device_id IS NULL OR
+                       candidate.lease_expires_at <= now() THEN $2
+                  ELSE candidate.active_device_id END,
+                lease_epoch = CASE
+                  WHEN candidate.active_device_id IS NULL OR
+                       candidate.lease_expires_at <= now() THEN candidate.lease_epoch + 1
+                  ELSE candidate.lease_epoch END,
+                lease_expires_at = CASE
+                  WHEN candidate.active_device_id IS NULL OR
+                       candidate.lease_expires_at <= now()
+                    THEN now() + interval '${LEASE_SECONDS} seconds'
+                  ELSE candidate.lease_expires_at END,
                 revision = revision + 1, updated_at = now()
-           FROM target WHERE s.id = target.playback_session_id
+           FROM target, candidate
+          WHERE s.id = target.playback_session_id AND s.id = candidate.id
          RETURNING s.*
        )
        INSERT INTO playback_checkpoints

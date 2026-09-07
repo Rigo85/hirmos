@@ -30,10 +30,9 @@ export class ArtistTagService {
         );
         return evidence;
       } catch {
-        // External metadata is optional. A short negative cache prevents hammering a failed service.
-        await this.repository.putArtistEvidence(sourceId, artist.id, provider.name, [], 1)
-          .catch(() => undefined);
-        return [];
+        // A provider failure is not negative evidence. Preserve expired evidence when available.
+        return await this.repository.staleArtistEvidence(sourceId, artist.id, provider.name)
+          .catch(() => undefined) ?? [];
       }
     }));
     const resolved = resolveGenres([...local, ...external.flat()]);

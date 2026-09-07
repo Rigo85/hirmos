@@ -13,6 +13,18 @@ import type {
   SourceTrack,
 } from './music-source-adapter.js';
 import { createHash, randomBytes } from 'node:crypto';
+import {
+  fetchWithRetry, parseRetryAfter, type ThirdPartyTelemetry,
+} from '../integrations/third-party-request.js';
+
+export class MusicSourceHttpError extends Error {
+  public constructor(
+    public readonly status: number,
+    public readonly retryAfterMs: number | null = null,
+  ) {
+    super(`Music source returned HTTP ${status}`);
+  }
+}
 
 export interface NavidromeAdapterOptions {
   baseUrl: URL;
@@ -20,6 +32,7 @@ export interface NavidromeAdapterOptions {
   password: string;
   clientName?: string;
   fetchImplementation?: typeof fetch;
+  telemetry?: ThirdPartyTelemetry;
 }
 
 interface SubsonicEnvelope<T = Record<string, unknown>> {
@@ -221,7 +234,7 @@ export class NavidromeAdapter implements MusicSourceAdapter {
       'getArtist', { id: artistId }, signal,
     );
     if (!response.artist) throw new Error('Music source did not return the artist');
-    const [info, topSongs] = await Promise.all([
+    const [infoResult, topSongsResult] = await Promise.all([
       this.call<{
         artistInfo2?: {
           biography?: string;
@@ -230,11 +243,15 @@ export class NavidromeAdapter implements MusicSourceAdapter {
         };
       }>('getArtistInfo2', {
         id: artistId, count: '12', includeNotPresent: 'false',
-      }, signal).catch(() => null),
+      }, signal).then((value) => ({ available: true, value }))
+        .catch(() => ({ available: false, value: null })),
       this.call<{ topSongs?: { song?: SourceSong[] } }>(
         'getTopSongs', { artist: response.artist.name, count: '50' }, signal,
-      ).catch(() => null),
+      ).then((value) => ({ available: true, value }))
+        .catch(() => ({ available: false, value: null })),
     ]);
+    const info = infoResult.value;
+    const topSongs = topSongsResult.value;
     return {
       ...mapArtist(response.artist),
       albums: (response.artist.album ?? []).map(mapAlbum),
@@ -244,6 +261,8 @@ export class NavidromeAdapter implements MusicSourceAdapter {
         .filter((artist) => Boolean(artist.id && artist.name))
         .map(mapArtist),
       topTracks: (topSongs?.topSongs?.song ?? []).map(mapSong),
+      externalInfoAvailable: infoResult.available,
+      topTracksAvailable: topSongsResult.available,
     };
   }
 
@@ -251,8 +270,10 @@ export class NavidromeAdapter implements MusicSourceAdapter {
     return this.media('stream', { id: trackId }, range ? { range } : {}, signal);
   }
 
-  public getCoverArt(coverArtId: string, signal?: AbortSignal): Promise<SourceMedia> {
-    return this.media('getCoverArt', { id: coverArtId }, {}, signal);
+  public getCoverArt(coverArtId: string, size = 320, signal?: AbortSignal): Promise<SourceMedia> {
+    return this.media('getCoverArt', { id: coverArtId, size: String(size) }, {
+      accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8',
+    }, signal, { attemptTimeoutMs: 12_000, totalTimeoutMs: 25_000 });
   }
 
   public async getLyrics(trackId: string, signal?: AbortSignal): Promise<SourceLyrics[]> {
@@ -315,9 +336,16 @@ export class NavidromeAdapter implements MusicSourceAdapter {
   ): Promise<SubsonicEnvelope<T>['subsonic-response']> {
     const url = this.url(endpoint, parameters);
 
-    const httpResponse = await this.fetchImplementation(url, {
-      signal,
+    const httpResponse = await fetchWithRetry(this.fetchImplementation, url, {
       headers: { accept: 'application/json' },
+    }, {
+      provider: 'opensubsonic',
+      operation: endpoint,
+      signal,
+      attemptTimeoutMs: 2_500,
+      totalTimeoutMs: 7_000,
+      maxAttempts: 2,
+      telemetry: this.options.telemetry,
     });
     if (!httpResponse.ok) {
       throw new Error(`Music source returned HTTP ${httpResponse.status}`);
@@ -335,13 +363,32 @@ export class NavidromeAdapter implements MusicSourceAdapter {
     parameters: Record<string, string>,
     headers: Record<string, string>,
     signal?: AbortSignal,
+    retryPolicy: { attemptTimeoutMs: number; totalTimeoutMs: number } = {
+      attemptTimeoutMs: 3_500,
+      totalTimeoutMs: 8_000,
+    },
   ): Promise<SourceMedia> {
-    const response = await this.fetchImplementation(this.url(endpoint, parameters), {
-      signal,
+    const response = await fetchWithRetry(
+      this.fetchImplementation,
+      this.url(endpoint, parameters),
+      {
       headers,
-    });
+      },
+      {
+        provider: 'opensubsonic',
+        operation: endpoint,
+        signal,
+        attemptTimeoutMs: retryPolicy.attemptTimeoutMs,
+        totalTimeoutMs: retryPolicy.totalTimeoutMs,
+        maxAttempts: 2,
+        telemetry: this.options.telemetry,
+      },
+    );
     if (!response.ok || !response.body) {
-      throw new Error(`Music source returned HTTP ${response.status}`);
+      throw new MusicSourceHttpError(
+        response.status,
+        parseRetryAfter(response.headers.get('retry-after')),
+      );
     }
     return {
       status: response.status,
@@ -350,6 +397,7 @@ export class NavidromeAdapter implements MusicSourceAdapter {
       contentLength: response.headers.get('content-length'),
       contentRange: response.headers.get('content-range'),
       acceptRanges: response.headers.get('accept-ranges'),
+      etag: response.headers.get('etag'),
     };
   }
 
@@ -394,6 +442,15 @@ interface SourceSong {
   genres?: Array<{ name?: string } | string> | { genre?: Array<{ name?: string } | string> };
   musicBrainzId?: string;
   starred?: string;
+  track?: number;
+  discNumber?: number;
+  bitRate?: number;
+  bitDepth?: number;
+  samplingRate?: number;
+  channelCount?: number;
+  bpm?: number;
+  replayGain?: Record<string, number>;
+  created?: string;
 }
 
 function mapSong(song: SourceSong): SourceTrack {
@@ -410,6 +467,15 @@ function mapSong(song: SourceSong): SourceTrack {
     genres: collectGenres(song.genre, song.genres),
     musicBrainzId: song.musicBrainzId ?? null,
     favorite: Boolean(song.starred),
+    trackNumber: finiteInteger(song.track),
+    discNumber: finiteInteger(song.discNumber),
+    bitRate: finiteInteger(song.bitRate),
+    bitDepth: finiteInteger(song.bitDepth),
+    samplingRate: finiteInteger(song.samplingRate),
+    channelCount: finiteInteger(song.channelCount),
+    bpm: finiteInteger(song.bpm),
+    replayGain: song.replayGain ?? null,
+    createdAt: normalizeSourceDate(song.created),
   };
 }
 
@@ -439,6 +505,7 @@ interface SourceAlbumRecord {
   starred?: string;
   playCount?: number;
   played?: string;
+  created?: string;
 }
 
 function mapArtist(artist: SourceArtistRecord): SourceArtist {
@@ -468,7 +535,18 @@ function mapAlbum(album: SourceAlbumRecord): SourceAlbum {
     favorite: Boolean(album.starred),
     playCount: typeof album.playCount === 'number' ? Math.max(0, album.playCount) : null,
     lastPlayedAt: album.played ?? null,
+    createdAt: normalizeSourceDate(album.created),
   };
+}
+
+function finiteInteger(value: number | undefined): number | null {
+  return Number.isFinite(value) ? Math.round(value!) : null;
+}
+
+function normalizeSourceDate(value: string | undefined): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf()) ? null : parsed.toISOString();
 }
 
 function collectGenres(

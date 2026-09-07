@@ -67,19 +67,25 @@ export class OutboxRepository {
     );
   }
 
-  public async markFailed(id: string, lockId: string, attempts: number, code: string): Promise<void> {
-    const permanentlyFailed = attempts >= 5;
-    const retryMinutes = Math.min(60, 2 ** Math.max(0, attempts - 1));
+  public async markFailed(
+    id: string,
+    lockId: string,
+    attempts: number,
+    code: string,
+    retryable: boolean,
+    retryDelaySeconds: number,
+  ): Promise<void> {
+    const permanentlyFailed = !retryable || attempts >= 5;
     await this.db.query(
       `UPDATE email_outbox
           SET locked_at = NULL,
               lock_id = NULL,
               failed_at = CASE WHEN $3 THEN now() ELSE NULL END,
               available_at = CASE WHEN $3 THEN available_at
-                                  ELSE now() + ($4::int * interval '1 minute') END,
+                                  ELSE now() + ($4::int * interval '1 second') END,
               last_error_code = $5
         WHERE id = $1 AND lock_id = $2`,
-      [id, lockId, permanentlyFailed, retryMinutes, code],
+      [id, lockId, permanentlyFailed, Math.max(1, Math.round(retryDelaySeconds)), code],
     );
   }
 }

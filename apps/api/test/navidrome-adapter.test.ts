@@ -66,6 +66,9 @@ describe('NavidromeAdapter', () => {
           song: [{
             id: 'remote-track', title: 'Canción', artist: 'Artista', album: 'Álbum',
             duration: 215, coverArt: 'cover-id', year: 2020, starred: '2026-01-01T00:00:00Z',
+            track: 3, discNumber: 1, bitRate: 950, bitDepth: 24, samplingRate: 96000,
+            channelCount: 2, bpm: 118, replayGain: { trackGain: -4.2 },
+            created: '2026-01-02T03:04:05Z',
           }],
         },
       },
@@ -83,6 +86,9 @@ describe('NavidromeAdapter', () => {
       artistId: null, albumId: null,
       durationMs: 215000, coverArtId: 'cover-id', year: 2020, favorite: true,
       genres: [], musicBrainzId: null,
+      trackNumber: 3, discNumber: 1, bitRate: 950, bitDepth: 24,
+      samplingRate: 96000, channelCount: 2, bpm: 118,
+      replayGain: { trackGain: -4.2 }, createdAt: '2026-01-02T03:04:05.000Z',
     }]);
     expect(result.artists).toEqual([]);
     expect(result.albums).toEqual([]);
@@ -157,6 +163,27 @@ describe('NavidromeAdapter', () => {
     expect(request!.url.href).not.toContain('secret');
   });
 
+  it('requests an explicit cover size and preserves its validator', async () => {
+    let request: URL | null = null;
+    const fetchImplementation = vi.fn(async (input: URL | RequestInfo) => {
+      request = new URL(String(input));
+      return new Response('image', {
+        headers: { 'content-type': 'image/webp', etag: '"upstream-cover"' },
+      });
+    });
+    const adapter = new NavidromeAdapter({
+      baseUrl: new URL('https://music.example'), username: 'service', password: 'secret',
+      fetchImplementation: fetchImplementation as typeof fetch,
+    });
+
+    const media = await adapter.getCoverArt('cover-id', 128);
+
+    expect(request).not.toBeNull();
+    expect(request!.searchParams.get('id')).toBe('cover-id');
+    expect(request!.searchParams.get('size')).toBe('128');
+    expect(media.etag).toBe('"upstream-cover"');
+  });
+
   it('maps synchronized OpenSubsonic lyrics', async () => {
     const fetchImplementation = vi.fn(async () => Response.json({
       'subsonic-response': {
@@ -218,5 +245,22 @@ describe('NavidromeAdapter', () => {
     expect(artist.topTracks[0]).toMatchObject({ id: 'top-track', title: 'La popular', durationMs: 180_000 });
     expect(topSongsRequest).not.toBeNull();
     expect(topSongsRequest!.searchParams.get('count')).toBe('50');
+  });
+
+  it('retries a transient OpenSubsonic response before exposing failure', async () => {
+    const fetchImplementation = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ 'subsonic-response': {
+        status: 'ok', version: '1.16.1', song: {
+          id: 'track-id', title: 'Recovered', artist: 'Artist', album: 'Album', duration: 120,
+        },
+      } }));
+    const adapter = new NavidromeAdapter({
+      baseUrl: new URL('https://music.example'), username: 'service', password: 'secret',
+      fetchImplementation: fetchImplementation as typeof fetch,
+    });
+
+    await expect(adapter.getTrack('track-id')).resolves.toMatchObject({ title: 'Recovered' });
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,6 +1,7 @@
 <aside
   class="lyrics-panel"
   [class.lyrics-panel--open]="open()"
+  [class.lyrics-panel--mobile-fullscreen]="mobileFullscreen()"
   [attr.aria-hidden]="!open()"
   [attr.inert]="open() ? null : ''"
   aria-label="Letra de la canción"

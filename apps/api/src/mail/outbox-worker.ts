@@ -54,6 +54,8 @@ export class OutboxWorker {
       const subject = recovery ? 'Recupera tu acceso a Hirmos' : 'Tu invitación a Hirmos';
       const action = recovery ? 'Restablecer contraseña' : 'Aceptar invitación';
       await this.provider.send({
+        deliveryId: message.id,
+        attempt: message.attempts,
         to: message.recipient,
         subject,
         text: `${data.display}\n\n${data.actionUrl}\n\nSi no esperabas este mensaje, puedes ignorarlo.`,
@@ -62,8 +64,15 @@ export class OutboxWorker {
       await this.repository.markSent(message.id, message.lockId);
     } catch (error) {
       const code = safeErrorCode(error);
-      await this.repository.markFailed(message.id, message.lockId, message.attempts, code);
-      this.logger.warn({ outboxId: message.id, code }, 'Mail delivery failed');
+      const retryable = isRetryableMailError(error);
+      const retryDelaySeconds = mailRetryDelaySeconds(message.attempts);
+      await this.repository.markFailed(
+        message.id, message.lockId, message.attempts, code, retryable, retryDelaySeconds,
+      );
+      this.logger.warn({
+        outboxId: message.id, code, retryable,
+        retryDelaySeconds: retryable ? retryDelaySeconds : undefined,
+      }, 'Mail delivery failed');
     }
   }
 }
@@ -78,4 +87,21 @@ function safeErrorCode(error: unknown): string {
   if (!error || typeof error !== 'object') return 'UNKNOWN';
   const value = error as Record<string, unknown>;
   return typeof value['code'] === 'string' ? value['code'].slice(0, 80) : 'DELIVERY_FAILED';
+}
+
+export function isRetryableMailError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const value = error as { code?: unknown; responseCode?: unknown };
+  if (typeof value.responseCode === 'number') {
+    return value.responseCode >= 400 && value.responseCode < 500;
+  }
+  return typeof value.code === 'string' && [
+    'ECONNRESET', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND',
+    'ETIMEDOUT', 'ESOCKETTIMEDOUT', 'EAI_AGAIN',
+  ].includes(value.code);
+}
+
+export function mailRetryDelaySeconds(attempt: number, random = Math.random): number {
+  const base = Math.min(3_600, 60 * (2 ** Math.max(0, attempt - 1)));
+  return Math.min(3_600, Math.round(base + base * 0.25 * Math.max(0, Math.min(1, random()))));
 }

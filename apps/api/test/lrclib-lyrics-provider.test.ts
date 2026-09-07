@@ -31,6 +31,21 @@ describe('LrclibLyricsProvider', () => {
     const provider = new LrclibLyricsProvider(vi.fn(async () => new Response(null, { status: 404 })) as typeof fetch);
     await expect(provider.find(track)).resolves.toBeNull();
   });
+
+  it('retries a transient upstream failure once', async () => {
+    const fetchImplementation = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({
+        id: 8, trackName: 'Canción', artistName: 'Artista',
+        syncedLyrics: '[00:01.00]Recuperada', plainLyrics: null,
+      }));
+    const provider = new LrclibLyricsProvider(fetchImplementation as typeof fetch);
+
+    const result = await provider.find(track);
+
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+    expect(result?.providerItemId).toBe('8');
+  });
 });
 
 describe('parseLrc', () => {

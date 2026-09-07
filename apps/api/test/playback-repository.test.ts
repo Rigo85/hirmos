@@ -47,6 +47,50 @@ describe('PlaybackRepository contextual queues', () => {
     expect(contextQuery).toContain('max(q.ordinal) + 1');
     expect(contextQuery).toContain('OFFSET $7 LIMIT 1');
     expect(contextQuery).not.toContain('WHERE ordinal = $7');
+    expectSelectionToPreserveAValidLease(contextQuery);
+  });
+
+  it('preserves a valid player lease when a remote device selects one track', async () => {
+    let selectionQuery = '';
+    const database = {
+      close: vi.fn(async () => undefined),
+      query: vi.fn(async (text: string) => {
+        if (text.includes('INSERT INTO playback_sessions')) return result([]);
+        if (text.trimStart().startsWith('UPDATE playback_sessions')
+          && text.includes('SET active_device_id = NULL')) {
+          return result([]);
+        }
+        if (text.includes("'track.selected'")) {
+          selectionQuery = text;
+          return result([{ id: 'checkpoint' }]);
+        }
+        if (text.includes('SELECT s.id, s.revision::text')) {
+          return result([{
+            id: 'session', revision: '9', status: 'playing',
+            current_queue_item_id: 'current', position_ms: 0,
+            position_observed_at: new Date('2026-09-05T00:00:00Z'),
+            active_device_id: '22222222-2222-4222-8222-222222222222',
+            lease_epoch: '4', lease_expires_at: new Date('2026-09-05T00:01:00Z'),
+            source_id: '33333333-3333-4333-8333-333333333333', remote_track_id: 'track-b',
+          }]);
+        }
+        if (text.includes('SELECT q.id, q.source_id')) return result([]);
+        throw new Error(`Unexpected query: ${text}`);
+      }),
+    } as unknown as Database;
+
+    const repository = new PlaybackRepository(database);
+    const response = await repository.select({
+      userId: '11111111-1111-4111-8111-111111111111',
+      deviceId: '55555555-5555-4555-8555-555555555555',
+      commandId: '44444444-4444-4444-8444-444444444444',
+      expectedRevision: 8,
+      sourceId: '33333333-3333-4333-8333-333333333333',
+      remoteTrackId: 'track-b',
+    });
+
+    expect(response.status).toBe('accepted');
+    expectSelectionToPreserveAValidLease(selectionQuery);
   });
 
   it('lets play acquire an expired or unowned lease without changing the track', async () => {
@@ -96,4 +140,14 @@ describe('PlaybackRepository contextual queues', () => {
 
 function result(rows: unknown[]) {
   return { rows, rowCount: rows.length, command: '', oid: 0, fields: [] };
+}
+
+function expectSelectionToPreserveAValidLease(query: string): void {
+  expect(query).toContain(
+    'SELECT s.id, s.active_device_id, s.lease_epoch, s.lease_expires_at',
+  );
+  expect(query).toContain('candidate.active_device_id IS NULL OR');
+  expect(query).toContain('ELSE candidate.active_device_id END');
+  expect(query).toContain('ELSE candidate.lease_epoch END');
+  expect(query).toContain('ELSE candidate.lease_expires_at END');
 }

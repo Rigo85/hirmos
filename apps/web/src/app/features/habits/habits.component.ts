@@ -7,10 +7,11 @@ import type {
 import { firstValueFrom } from 'rxjs';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { TrackRowComponent } from '../../shared/track-row.component';
+import { LazyCoverDirective } from '../../shared/lazy-cover.directive';
 
 @Component({
   selector: 'app-habits',
-  imports: [RouterLink, TrackRowComponent],
+  imports: [RouterLink, TrackRowComponent, LazyCoverDirective],
   templateUrl: './habits.component.html',
 })
 export class HabitsComponent {

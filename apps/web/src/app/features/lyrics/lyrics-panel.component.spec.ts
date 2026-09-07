@@ -94,6 +94,21 @@ describe('LyricsPanelComponent', () => {
     http.expectOne('/api/music/tracks/track-b/lyrics').flush({ lyrics: [], adjustmentMs: 0 });
   });
 
+  it('distinguishes a temporary provider outage from a missing lyric', () => {
+    const fixture = TestBed.createComponent(LyricsPanelComponent);
+    fixture.componentRef.setInput('track', track);
+    fixture.componentRef.setInput('open', true);
+    fixture.detectChanges();
+
+    TestBed.inject(HttpTestingController).expectOne('/api/music/tracks/track-a/lyrics').flush({
+      lyrics: [], adjustmentMs: 0, availability: 'temporarily_unavailable',
+    });
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[role="status"]').textContent)
+      .toContain('Intenta nuevamente');
+  });
+
   it('pauses automatic following after manual scroll and can resume it', () => {
     const fixture = TestBed.createComponent(LyricsPanelComponent);
     fixture.componentRef.setInput('track', track);

@@ -26,8 +26,14 @@
     "history:import": "node scripts/import-listen-history.mjs",
     "catalog:warm-habits": "node scripts/warm-habits-catalog.mjs",
     "catalog:link-artists": "node scripts/link-artist-identities.mjs",
+    "smoke:cache": "node scripts/smoke-cache.mjs",
+    "smoke:cache-source": "node scripts/smoke-cache-source.mjs",
     "smoke:auth": "node scripts/smoke-auth-flow.mjs",
-    "smoke:playback": "node scripts/smoke-playback.mjs"
+    "smoke:playback": "node scripts/smoke-playback.mjs",
+    "audio-lab": "vite --config tools/audio-eq-lab/vite.config.ts",
+    "audio-lab:build": "vite build --config tools/audio-eq-lab/vite.config.ts",
+    "audio-lab:test": "vitest run --config tools/audio-eq-lab/vitest.config.ts",
+    "audio-lab:typecheck": "tsc --noEmit -p tools/audio-eq-lab/tsconfig.json"
   },
   "allowScripts": {
     "@parcel/watcher@2.6.0": true,

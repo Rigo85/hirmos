@@ -41,7 +41,7 @@
         <div #habitCarousel class="habit-carousel" aria-label="Tus artistas de los últimos 30 días">
           @for (artist of home.topArtists; track artist.id) {
             <a class="habit-artist-card" [routerLink]="['/artists', artist.id]">
-              @if (artist.coverUrl) { <img loading="lazy" decoding="async" [src]="artist.coverUrl" [alt]="artist.name"> }
+              @if (artist.coverUrl) { <img [appLazyCover]="artist.coverUrl" [coverSize]="320" [alt]="artist.name"> }
               @else { <span>{{ artist.name.slice(0, 2).toUpperCase() }}</span> }
               <div><strong>{{ artist.name }}</strong><small>{{ habitMetric(artist) }}</small><em>{{ artist.trackCount }} {{ artist.trackCount === 1 ? 'canción' : 'canciones' }}</em></div>
             </a>
@@ -49,7 +49,7 @@
         </div>
       </section>
     }
-    <section class="music-section"><div class="section-heading"><div><p class="eyebrow">RECIÉN LLEGADOS</p><h2>Añadido recientemente</h2></div><a routerLink="/library">Ver biblioteca</a></div><div class="album-grid album-grid--five">@for (album of home.recentlyAdded; track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img loading="lazy" decoding="async" [src]="album.coverUrl" [alt]="'Carátula de ' + album.name"> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small><em>{{ album.year || '—' }} · {{ album.songCount }} canciones</em></a> }</div></section>
-    <section class="music-section"><div class="section-heading"><div><p class="eyebrow">OTRA VUELTA</p><h2>Redescubre tu biblioteca</h2></div></div><div class="album-grid album-grid--five">@for (album of home.rediscover; track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img loading="lazy" decoding="async" [src]="album.coverUrl" [alt]="'Carátula de ' + album.name"> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small></a> }</div></section>
+    <section class="music-section"><div class="section-heading"><div><p class="eyebrow">RECIÉN LLEGADOS</p><h2>Añadido recientemente</h2></div><a routerLink="/library">Ver biblioteca</a></div><div class="album-grid album-grid--five">@for (album of home.recentlyAdded; track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img [appLazyCover]="album.coverUrl" [coverSize]="320" [alt]="'Carátula de ' + album.name"> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small><em>{{ album.year || '—' }} · {{ album.songCount }} canciones</em></a> }</div></section>
+    <section class="music-section"><div class="section-heading"><div><p class="eyebrow">OTRA VUELTA</p><h2>Redescubre tu biblioteca</h2></div></div><div class="album-grid album-grid--five">@for (album of home.rediscover; track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img [appLazyCover]="album.coverUrl" [coverSize]="320" [alt]="'Carátula de ' + album.name"> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small></a> }</div></section>
   }
 </div>

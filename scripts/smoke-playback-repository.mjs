@@ -23,8 +23,12 @@ try {
              true, '[]'::jsonb) RETURNING id`,
   )).rows[0].id;
   const deviceId = randomUUID();
+  const remoteDeviceId = randomUUID();
   const service = new PlaybackService(new PlaybackRepository(db), new ActivityRepository(db));
   await service.registerDevice({ userId, deviceId, name: 'Smoke', type: 'desktop' });
+  await service.registerDevice({
+    userId, deviceId: remoteDeviceId, name: 'Smoke remote', type: 'mobile',
+  });
   const initial = await service.snapshot(userId);
   const tracks = ['one', 'two', 'three'].map((id) => encodeTrackReference(sourceId, id));
   const selected = await service.selectContext({
@@ -32,11 +36,24 @@ try {
     trackRefs: tracks, selectedIndex: 1, contextType: 'album', contextRef: 'album:smoke',
   });
   if (selected.status !== 'accepted' || selected.snapshot.queue.length !== 3
-      || selected.snapshot.currentTrackRef !== tracks[1]) {
+      || selected.snapshot.currentTrackRef !== tracks[1]
+      || selected.snapshot.activeDeviceId !== deviceId
+      || selected.snapshot.leaseEpoch !== initial.leaseEpoch + 1) {
     throw new Error('Context selection did not create the expected queue');
   }
+  const selectedRemotely = await service.selectContext({
+    userId, deviceId: remoteDeviceId, commandId: randomUUID(),
+    expectedRevision: selected.snapshot.revision,
+    trackRefs: tracks, selectedIndex: 1, contextType: 'album', contextRef: 'album:smoke',
+  });
+  if (selectedRemotely.status !== 'accepted'
+      || selectedRemotely.snapshot.activeDeviceId !== deviceId
+      || selectedRemotely.snapshot.leaseEpoch !== selected.snapshot.leaseEpoch) {
+    throw new Error('Remote context selection transferred the active lease');
+  }
   const moved = await service.control({
-    userId, deviceId, commandId: randomUUID(), expectedRevision: selected.snapshot.revision,
+    userId, deviceId: remoteDeviceId, commandId: randomUUID(),
+    expectedRevision: selectedRemotely.snapshot.revision,
     action: 'next', reason: 'ended',
   });
   if (moved.status !== 'accepted' || moved.snapshot.currentTrackRef !== tracks[2]) {
@@ -49,11 +66,13 @@ try {
        (SELECT count(*)::int FROM user_track_stats WHERE user_id = $1 AND completions = 1) AS completions`,
     [userId],
   );
-  if (telemetry.rows[0].events !== 3 || telemetry.rows[0].stats !== 2
+  if (telemetry.rows[0].events !== 4 || telemetry.rows[0].stats !== 2
       || telemetry.rows[0].completions !== 1) {
     throw new Error(`Unexpected telemetry: ${JSON.stringify(telemetry.rows[0])}`);
   }
-  process.stdout.write(JSON.stringify({ status: 'ok', queue: 3, ...telemetry.rows[0] }) + '\n');
+  process.stdout.write(JSON.stringify({
+    status: 'ok', queue: 3, remoteSelectionPreservedLease: true, ...telemetry.rows[0],
+  }) + '\n');
 } finally {
   if (userId) await db.query('DELETE FROM users WHERE id = $1', [userId]);
   if (sourceId) await db.query('DELETE FROM music_sources WHERE id = $1', [sourceId]);

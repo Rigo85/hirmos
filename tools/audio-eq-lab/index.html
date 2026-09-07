@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0b0d11" />
+    <title>Hirmos · Laboratorio de audio</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="Hirmos Audio Lab">
+        <span class="brand__mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>Hirmos</span>
+        <small>Audio Lab</small>
+      </a>
+      <span class="isolation"><i></i>Aislado · no modifica Hirmos</span>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">PRUEBA DE PROCESAMIENTO</p>
+          <h1>Escucha antes de integrar.</h1>
+          <p class="hero__copy">
+            Compara la señal original con perfiles versionados y un ajuste
+            conservador derivado de la pista. El archivo nunca sale del navegador.
+          </p>
+        </div>
+        <div class="hero__actions">
+          <label class="file-button" for="audio-file">Elegir una canción</label>
+          <input id="audio-file" type="file" accept="audio/*" />
+          <button id="load-demo" class="button button--ghost" type="button">
+            Cargar señal técnica
+          </button>
+        </div>
+      </section>
+
+      <p id="status" class="status" role="status" aria-live="polite">
+        Elige un archivo o carga la señal técnica para comenzar.
+      </p>
+
+      <section class="player card" aria-label="Reproductor de prueba">
+        <button id="play" class="play" type="button" disabled aria-label="Reproducir">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+        </button>
+        <div class="track">
+          <strong id="track-name">Ninguna pista cargada</strong>
+          <span id="track-detail">El audio se procesa solamente en esta pestaña</span>
+        </div>
+        <span id="current-time" class="time">0:00</span>
+        <input id="seek" class="seek" type="range" min="0" max="1000" value="0" disabled aria-label="Posición" />
+        <span id="duration" class="time">0:00</span>
+        <button id="ab-toggle" class="ab-toggle" type="button" disabled aria-pressed="false">
+          <span>A/B</span>
+          <strong id="ab-state">Procesada</strong>
+        </button>
+      </section>
+
+      <div class="workspace">
+        <section class="controls card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">RECETA</p>
+              <h2>Carácter y adaptación</h2>
+            </div>
+            <span id="recipe-version" class="version">v0.1</span>
+          </div>
+
+          <label class="field">
+            <span>Modo</span>
+            <select id="profile">
+              <option value="flat">Flat · sin ecualización</option>
+              <option value="auto" selected>Automático</option>
+              <option value="rock">Rock</option>
+              <option value="pop">Pop</option>
+              <option value="electronic">Electrónica</option>
+              <option value="acoustic">Acústica</option>
+              <option value="classical">Clásica</option>
+              <option value="diagnostic">Prueba de cableado · cambio extremo</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Etiquetas <small>separadas por comas</small></span>
+            <input id="tags" type="text" placeholder="hard rock, alternative, 2000s" />
+          </label>
+
+          <label class="field field--range">
+            <span>Intensidad <output id="intensity-value">60 %</output></span>
+            <input id="intensity" type="range" min="0" max="100" value="60" />
+          </label>
+
+          <label class="switch-row">
+            <span>
+              <strong>Ajuste por pista</strong>
+              <small>Reduce resonancias medidas; nunca las amplifica.</small>
+            </span>
+            <input id="track-adaptation" type="checkbox" checked />
+          </label>
+
+          <label class="switch-row">
+            <span>
+              <strong>EQ dinámica</strong>
+              <small>Actúa solo cuando una banda excede su umbral.</small>
+            </span>
+            <input id="dynamic-eq" type="checkbox" checked />
+          </label>
+
+          <div class="flat-note" id="flat-note" hidden>
+            Flat usa la ruta seca: 0 dB de EQ, sin adaptación ni EQ dinámica.
+          </div>
+
+          <div class="diagnostic-note" id="diagnostic-note" hidden>
+            <strong>No es un perfil musical.</strong> Aplica una curva extrema para
+            comprobar que A/B cambia realmente la señal. La diferencia debe ser obvia.
+          </div>
+
+          <button id="export-recipe" class="button button--secondary" type="button" disabled>
+            Exportar receta JSON
+          </button>
+        </section>
+
+        <section class="visual card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">RESPUESTA</p>
+              <h2>Lo que está haciendo</h2>
+            </div>
+            <span id="headroom" class="headroom">Preamp 0.0 dB</span>
+          </div>
+          <canvas id="curve" width="960" height="360" aria-label="Curva de ecualización"></canvas>
+          <div id="band-values" class="band-values" aria-label="Ganancia por banda"></div>
+          <div class="dynamic-status">
+            <span>Reducción dinámica</span>
+            <div id="dynamic-values"></div>
+          </div>
+        </section>
+
+        <section class="metrics card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">EVALUACIÓN INICIAL</p>
+              <h2>Medidas de la pista</h2>
+            </div>
+            <span class="version">local</span>
+          </div>
+          <div id="metrics" class="metric-grid">
+            <p class="empty">Carga una pista para analizarla.</p>
+          </div>
+          <p class="disclaimer">
+            Este prototipo mide pico de muestra y RMS, no LUFS ni true peak.
+            Esas medidas se incorporarán en el analizador servidor si la escucha se acepta.
+          </p>
+        </section>
+
+        <section class="affinity card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">AFINIDAD</p>
+              <h2>Perfiles sugeridos</h2>
+            </div>
+            <span class="version">multietiqueta</span>
+          </div>
+          <div id="affinities" class="affinity-list">
+            <p class="empty">Las etiquetas y el análisis alimentarán esta estimación.</p>
+          </div>
+          <ul id="evidence" class="evidence"></ul>
+        </section>
+      </div>
+
+      <section class="protocol card">
+        <div>
+          <p class="eyebrow">PROTOCOLO DE ESCUCHA</p>
+          <h2>No decidas por más volumen</h2>
+        </div>
+        <ol>
+          <li>Escucha 20–30 segundos en <strong>Original</strong>.</li>
+          <li>Cambia a <strong>Procesada</strong> sin mover el volumen.</li>
+          <li>Prueba Flat, Automático y el perfil que sugieren las etiquetas.</li>
+          <li>Busca claridad sin aspereza, graves controlados y ausencia de bombeo.</li>
+          <li>Repite con auriculares, altavoces y teléfono.</li>
+        </ol>
+      </section>
+    </main>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

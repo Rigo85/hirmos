@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { FavoriteRepository } from '../src/favorites/favorite-repository.js';
 import { trackKey } from '../src/favorites/favorite-repository.js';
+import type { CatalogRepository } from '../src/activity/catalog-repository.js';
 import type { MusicSourceAdapter, SourceTrack } from '../src/music-source/music-source-adapter.js';
 import type { MusicSourceAdapterFactory } from '../src/music-source/music-source-adapter-factory.js';
 import type { MusicSourceRepository, StoredMusicSource } from '../src/music-source/music-source-repository.js';
@@ -38,16 +39,46 @@ describe('MusicSourceService favorites', () => {
     expect(setTrack).toHaveBeenCalledWith('user-a', sourceId, 'track-a', true);
     expect(adapter.getTrack).toHaveBeenCalledWith('track-a', expect.any(AbortSignal));
   });
+
+  it('resolves a playback queue from the catalog in one ordered batch', async () => {
+    const adapter = { getTrack: vi.fn() } as unknown as MusicSourceAdapter;
+    const favorites = {
+      matchingTrackKeys: vi.fn(async () => new Set([trackKey(sourceId, 'track-b')])),
+    } as unknown as FavoriteRepository;
+    const tracksByIds = vi.fn(async () => [track('track-b'), track('track-a')]);
+    const service = createService(
+      adapter,
+      favorites,
+      { tracksByIds } as unknown as CatalogRepository,
+    );
+    const references = [
+      encodeTrackReference(sourceId, 'track-a'),
+      encodeTrackReference(sourceId, 'track-b'),
+    ];
+
+    const result = await service.tracksByReferences('user-a', references);
+
+    expect(tracksByIds).toHaveBeenCalledWith(sourceId, ['track-a', 'track-b']);
+    expect(adapter.getTrack).not.toHaveBeenCalled();
+    expect(result.tracks.map((item) => [item.id, item.favorite])).toEqual([
+      [references[0], false],
+      [references[1], true],
+    ]);
+  });
 });
 
 const sourceId = '11111111-1111-4111-8111-111111111111';
 
-function createService(adapter: MusicSourceAdapter, favorites: FavoriteRepository) {
+function createService(
+  adapter: MusicSourceAdapter,
+  favorites: FavoriteRepository,
+  catalog?: CatalogRepository,
+) {
   return new MusicSourceService(
     { current: vi.fn(async () => source()) } as unknown as MusicSourceRepository,
     { decrypt: vi.fn(() => ({ username: 'service', password: 'secret' })) } as unknown as SourceCredentialCipher,
     { create: vi.fn(() => adapter) } as unknown as MusicSourceAdapterFactory,
-    undefined, undefined, [], undefined, undefined, favorites,
+    undefined, undefined, [], catalog, undefined, favorites,
   );
 }
 
@@ -59,9 +90,9 @@ function source(): StoredMusicSource {
   };
 }
 
-function track(): SourceTrack {
+function track(id = 'track-a'): SourceTrack {
   return {
-    id: 'track-a', title: 'Song', artist: 'Artist', artistId: null, album: 'Album',
+    id, title: id === 'track-a' ? 'Song' : `Song ${id}`, artist: 'Artist', artistId: null, album: 'Album',
     albumId: null, durationMs: 180_000, coverArtId: null, year: 2026, genres: [],
     favorite: false, musicBrainzId: null,
   };

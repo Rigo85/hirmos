@@ -6,8 +6,9 @@ import type { ArtistDetail, ArtistGenreTagsResponse, Track } from '@hirmos/contr
 import { firstValueFrom } from 'rxjs';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { TrackRowComponent } from '../../shared/track-row.component';
+import { LazyCoverDirective } from '../../shared/lazy-cover.directive';
 
-@Component({ selector: 'app-artist', imports: [RouterLink, TrackRowComponent], templateUrl: './artist.component.html' })
+@Component({ selector: 'app-artist', imports: [RouterLink, TrackRowComponent, LazyCoverDirective], templateUrl: './artist.component.html' })
 export class ArtistComponent {
   private readonly http = inject(HttpClient);
   private readonly route = inject(ActivatedRoute);
