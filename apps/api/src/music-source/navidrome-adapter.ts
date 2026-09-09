@@ -14,7 +14,7 @@ import type {
 } from './music-source-adapter.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  fetchWithRetry, parseRetryAfter, type ThirdPartyTelemetry,
+  fetchStreamingResponseWithRetry, fetchWithRetry, parseRetryAfter, type ThirdPartyTelemetry,
 } from '../integrations/third-party-request.js';
 
 export class MusicSourceHttpError extends Error {
@@ -266,8 +266,22 @@ export class NavidromeAdapter implements MusicSourceAdapter {
     };
   }
 
-  public getStream(trackId: string, range?: string, signal?: AbortSignal): Promise<SourceMedia> {
-    return this.media('stream', { id: trackId }, range ? { range } : {}, signal);
+  public async getStream(trackId: string, range?: string, signal?: AbortSignal): Promise<SourceMedia> {
+    const response = await fetchStreamingResponseWithRetry(
+      this.fetchImplementation,
+      this.url('stream', { id: trackId }),
+      { headers: range ? { range } : {} },
+      {
+        provider: 'opensubsonic',
+        operation: 'stream',
+        signal,
+        attemptTimeoutMs: 3_500,
+        totalTimeoutMs: 8_000,
+        maxAttempts: 2,
+        telemetry: this.options.telemetry,
+      },
+    );
+    return this.sourceMedia(response);
   }
 
   public getCoverArt(coverArtId: string, size = 320, signal?: AbortSignal): Promise<SourceMedia> {
@@ -384,6 +398,10 @@ export class NavidromeAdapter implements MusicSourceAdapter {
         telemetry: this.options.telemetry,
       },
     );
+    return this.sourceMedia(response);
+  }
+
+  private sourceMedia(response: Response): SourceMedia {
     if (!response.ok || !response.body) {
       throw new MusicSourceHttpError(
         response.status,

@@ -50,6 +50,31 @@ export async function fetchWithRetry(
   init: Omit<RequestInit, 'signal'>,
   options: ThirdPartyFetchOptions,
 ): Promise<Response> {
+  return fetchWithRetryPolicy(fetchImplementation, input, init, options, 'complete');
+}
+
+/**
+ * Fetches a streaming response while applying the timeout budget only until
+ * response headers arrive. Once headers are available, the caller's signal is
+ * the sole lifetime control for the response body. This is essential for
+ * audio: a normal song must not inherit a short metadata-request deadline.
+ */
+export async function fetchStreamingResponseWithRetry(
+  fetchImplementation: typeof fetch,
+  input: URL | RequestInfo,
+  init: Omit<RequestInit, 'signal'>,
+  options: ThirdPartyFetchOptions,
+): Promise<Response> {
+  return fetchWithRetryPolicy(fetchImplementation, input, init, options, 'headers');
+}
+
+async function fetchWithRetryPolicy(
+  fetchImplementation: typeof fetch,
+  input: URL | RequestInfo,
+  init: Omit<RequestInit, 'signal'>,
+  options: ThirdPartyFetchOptions,
+  timeoutScope: 'complete' | 'headers',
+): Promise<Response> {
   const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 2));
   const attemptTimeoutMs = positiveMilliseconds(options.attemptTimeoutMs, 'attemptTimeoutMs');
   const totalTimeoutMs = positiveMilliseconds(options.totalTimeoutMs, 'totalTimeoutMs');
@@ -64,13 +89,21 @@ export async function fetchWithRetry(
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw new DOMException('Third-party request budget expired', 'TimeoutError');
     const attemptStartedAt = Date.now();
-    const timeoutSignal = AbortSignal.timeout(Math.min(attemptTimeoutMs, remainingMs));
+    const timeoutController = timeoutScope === 'headers' ? new AbortController() : null;
+    const timeout = timeoutController
+      ? setTimeout(() => timeoutController.abort(
+        new DOMException('Third-party response headers timed out', 'TimeoutError'),
+      ), Math.min(attemptTimeoutMs, remainingMs))
+      : null;
+    const timeoutSignal = timeoutController?.signal
+      ?? AbortSignal.timeout(Math.min(attemptTimeoutMs, remainingMs));
     const attemptSignal = options.signal
       ? AbortSignal.any([options.signal, timeoutSignal])
       : timeoutSignal;
 
     try {
       const response = await fetchImplementation(input, { ...init, signal: attemptSignal });
+      if (timeout !== null) clearTimeout(timeout);
       const elapsedMs = Date.now() - attemptStartedAt;
       if (!isRetryableStatus(response.status) || !retryAllowed) {
         options.telemetry?.record({
@@ -114,6 +147,7 @@ export async function fetchWithRetry(
       await response.body?.cancel().catch(() => undefined);
       await abortableDelay(retryDelayMs, options.signal);
     } catch (error) {
+      if (timeout !== null) clearTimeout(timeout);
       throwIfCallerAborted(options.signal);
       const elapsedMs = Date.now() - attemptStartedAt;
       const reason = errorReason(error);

@@ -32,6 +32,7 @@ import { CacheRepository } from './cache/cache-repository.js';
 import { ObjectStore } from './cache/object-store.js';
 import { ImageCacheService } from './cache/image-cache-service.js';
 import { CatalogSyncWorker } from './cache/catalog-sync-worker.js';
+import { CatalogSyncCoordinator } from './cache/catalog-sync-coordinator.js';
 import { LyricsObjectCache } from './cache/lyrics-object-cache.js';
 import { CacheMaintenanceWorker } from './cache/cache-maintenance-worker.js';
 import { LyricsCacheBackfillWorker } from './cache/lyrics-cache-backfill-worker.js';
@@ -99,11 +100,15 @@ const musicSourceService = database && config.DATA_ENCRYPTION_KEY
 const playbackService = database
   ? new PlaybackService(new PlaybackRepository(database), activityRepository)
   : undefined;
+const catalogSync = musicSourceService
+  ? new CatalogSyncCoordinator(musicSourceService)
+  : undefined;
 const app = await buildApp({
   config,
   authService,
   accountService,
   musicSourceService,
+  catalogSync,
   database: database ?? undefined,
 });
 thirdPartyTelemetry.attachLogger(app.log);
@@ -124,18 +129,18 @@ const imageWarmWorker = database && imageCache && musicSourceService
 const metadataWarmWorker = database && musicSourceService
   ? new MetadataWarmWorker(new MetadataWarmRepository(database), musicSourceService, app.log)
   : null;
-const catalogSyncWorker = musicSourceService
+catalogSync?.setAfterSync(async () => {
+  await imageWarmWorker?.enqueueNow();
+  await metadataWarmWorker?.enqueueNow();
+});
+const catalogSyncWorker = catalogSync
   ? new CatalogSyncWorker(
-      musicSourceService,
+      catalogSync,
       app.log,
       config.CATALOG_SYNC_INTERVAL_HOURS * 60 * 60 * 1_000,
-      async () => {
-        await imageWarmWorker?.enqueueNow();
-        await metadataWarmWorker?.enqueueNow();
-      },
     )
   : null;
-const io = createSocketServer(app.server, config, authService, playbackService, revocations);
+const io = createSocketServer(app.server, config, authService, playbackService, revocations, app.log);
 const mailProvider = await createSmtpMailProvider(config, thirdPartyTelemetry);
 const outboxWorker = database && outboxCipher && mailProvider
   ? new OutboxWorker(new OutboxRepository(database), outboxCipher, mailProvider, app.log)

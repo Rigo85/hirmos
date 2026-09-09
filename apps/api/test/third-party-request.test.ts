@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  fetchStreamingResponseWithRetry,
   fetchWithRetry,
   isRetryableStatus,
   parseRetryAfter,
@@ -64,5 +65,79 @@ describe('fetchWithRetry', () => {
     expect(isRetryableStatus(429)).toBe(true);
     expect(isRetryableStatus(503)).toBe(true);
     expect(isRetryableStatus(409)).toBe(false);
+  });
+});
+
+describe('fetchStreamingResponseWithRetry', () => {
+  it('stops the short timeout at headers and keeps a slow body readable', async () => {
+    const fetchImplementation = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+      const signal = init?.signal;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const timeout = setTimeout(() => {
+            controller.enqueue(new Uint8Array([1, 2, 3]));
+            controller.close();
+          }, 60);
+          signal?.addEventListener('abort', () => {
+            clearTimeout(timeout);
+            controller.error(signal.reason);
+          }, { once: true });
+        },
+      });
+      return new Response(body);
+    });
+
+    const response = await fetchStreamingResponseWithRetry(
+      fetchImplementation as typeof fetch,
+      new URL('https://example.test/audio'),
+      {},
+      {
+        provider: 'example', operation: 'stream', attemptTimeoutMs: 20,
+        totalTimeoutMs: 40, maxAttempts: 1,
+      },
+    );
+
+    await expect(response.arrayBuffer()).resolves.toEqual(new Uint8Array([1, 2, 3]).buffer);
+  });
+
+  it('still cancels the body when the real caller disconnects', async () => {
+    const caller = new AbortController();
+    const fetchImplementation = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+      const signal = init?.signal;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          signal?.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+        },
+      }));
+    });
+    const response = await fetchStreamingResponseWithRetry(
+      fetchImplementation as typeof fetch,
+      new URL('https://example.test/audio'),
+      {},
+      {
+        provider: 'example', operation: 'stream', signal: caller.signal,
+        attemptTimeoutMs: 100, totalTimeoutMs: 200, maxAttempts: 1,
+      },
+    );
+
+    caller.abort(new DOMException('Listener disconnected', 'AbortError'));
+    await expect(response.arrayBuffer()).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('retains the bounded timeout while waiting for headers', async () => {
+    const fetchImplementation = vi.fn((_input: URL | RequestInfo, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+      }));
+
+    await expect(fetchStreamingResponseWithRetry(
+      fetchImplementation as typeof fetch,
+      new URL('https://example.test/audio'),
+      {},
+      {
+        provider: 'example', operation: 'stream', attemptTimeoutMs: 15,
+        totalTimeoutMs: 30, maxAttempts: 1,
+      },
+    )).rejects.toMatchObject({ name: 'TimeoutError' });
   });
 });

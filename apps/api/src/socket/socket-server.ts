@@ -1,9 +1,11 @@
 import type { Server as HttpServer } from 'node:http';
-import type {
-  ClientToServerEvents,
-  PlaybackCommandAck,
-  PlaybackCommandResult,
-  ServerToClientEvents,
+import type { FastifyBaseLogger } from 'fastify';
+import {
+  playbackClientDiagnosticSchema,
+  type ClientToServerEvents,
+  type PlaybackCommandAck,
+  type PlaybackCommandResult,
+  type ServerToClientEvents,
 } from '@hirmos/contracts';
 import { Server } from 'socket.io';
 import { z } from 'zod';
@@ -58,6 +60,7 @@ export function createSocketServer(
   authService: AuthService | undefined,
   playbackService: PlaybackService | undefined,
   revocations?: SessionRevocationNotifier,
+  logger?: Pick<FastifyBaseLogger, 'debug' | 'info' | 'warn' | 'error'>,
 ) {
   const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>(httpServer, {
     path: '/socket.io',
@@ -97,26 +100,45 @@ export function createSocketServer(
   });
 
   io.on('connection', (socket) => {
+    logger?.info({ playbackSocket: {
+      event: 'connected', socketId: socket.id, deviceId: socket.data.deviceId,
+      transport: socket.conn.transport.name,
+    } }, 'Playback socket connected');
     const room = `user:${socket.data.userId}`;
     void socket.join(room);
     void emitSnapshot();
     const sessionCheck = setInterval(() => void ensureSession(), 15_000);
-    socket.once('disconnect', () => clearInterval(sessionCheck));
+    socket.once('disconnect', (reason) => {
+      clearInterval(sessionCheck);
+      logger?.info({ playbackSocket: {
+        event: 'disconnected', socketId: socket.id, deviceId: socket.data.deviceId, reason,
+      } }, 'Playback socket disconnected');
+    });
 
     socket.on('playback:sync', () => void ensureSession().then((valid) => {
       if (valid) return emitSnapshot();
     }));
-    socket.on('playback:claim', (command, ack) => void execute(claimSchema, command, ack, (value) =>
+    socket.on('playback:diagnostic', (diagnostic) => {
+      const parsed = playbackClientDiagnosticSchema.safeParse(diagnostic);
+      if (!parsed.success) return;
+      const level = parsed.data.kind === 'ack_timeout' ? 'warn' : 'info';
+      logger?.[level]({ playbackClient: {
+        ...parsed.data,
+        socketId: socket.id,
+        deviceId: socket.data.deviceId,
+      } }, 'Playback client diagnostic');
+    });
+    socket.on('playback:claim', (command, ack) => void execute('claim', claimSchema, command, ack, (value) =>
       playbackService!.claim({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
-    socket.on('playback:select', (command, ack) => void execute(selectSchema, command, ack, (value) =>
+    socket.on('playback:select', (command, ack) => void execute('select', selectSchema, command, ack, (value) =>
       playbackService!.select({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
-    socket.on('playback:select-context', (command, ack) => void execute(selectContextSchema, command, ack, (value) =>
+    socket.on('playback:select-context', (command, ack) => void execute('select-context', selectContextSchema, command, ack, (value) =>
       playbackService!.selectContext({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
-    socket.on('playback:update', (command, ack) => void execute(updateSchema, command, ack, (value) =>
+    socket.on('playback:update', (command, ack) => void execute('update', updateSchema, command, ack, (value) =>
       playbackService!.update({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
-    socket.on('playback:control', (command, ack) => void execute(controlSchema, command, ack, (value) =>
+    socket.on('playback:control', (command, ack) => void execute('control', controlSchema, command, ack, (value) =>
       playbackService!.control({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
-    socket.on('playback:queue-remove', (command, ack) => void execute(queueRemoveSchema, command, ack, (value) =>
+    socket.on('playback:queue-remove', (command, ack) => void execute('queue-remove', queueRemoveSchema, command, ack, (value) =>
       playbackService!.removeQueueItem({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
 
     async function emitSnapshot(): Promise<void> {
@@ -128,24 +150,64 @@ export function createSocketServer(
     }
 
     async function execute<T>(
+      commandName: string,
       schema: z.ZodType<T>,
       command: unknown,
       ack: PlaybackCommandAck | undefined,
       action: (value: T) => Promise<PlaybackCommandResult>,
     ): Promise<void> {
+      const startedAt = Date.now();
       const parsed = schema.safeParse(command);
-      if (!parsed.success) return emitError('INVALID_COMMAND', 'El comando de reproducción no es válido.');
+      if (!parsed.success) {
+        logger?.warn({ playbackCommand: {
+          command: commandName, outcome: 'invalid', elapsedMs: Date.now() - startedAt,
+          socketId: socket.id,
+        } }, 'Playback command rejected');
+        return emitError('INVALID_COMMAND', 'El comando de reproducción no es válido.');
+      }
       try {
         if (!await ensureSession()) return;
         const result = await action(parsed.data);
         ack?.(result);
         io.to(room).emit('playback:snapshot', result.snapshot);
+        const fields = { playbackCommand: {
+          command: commandName,
+          commandId: commandIdOf(parsed.data),
+          outcome: result.status,
+          elapsedMs: Date.now() - startedAt,
+          socketId: socket.id,
+          revision: result.snapshot.revision,
+        } };
+        if (commandName === 'update' && result.status !== 'conflict') {
+          logger?.debug(fields, 'Playback command completed');
+        } else {
+          logger?.info(fields, 'Playback command completed');
+        }
         if (result.status === 'conflict') {
           emitError('PLAYBACK_CONFLICT', 'El hilo cambió; se cargó el estado más reciente.');
         }
-      } catch {
-        emitError('PLAYBACK_CONFLICT', 'El hilo cambió; sincronizando el estado actual.');
-        await emitSnapshot();
+      } catch (error) {
+        logger?.error({ err: error, playbackCommand: {
+          command: commandName,
+          commandId: commandIdOf(parsed.data),
+          outcome: 'failure',
+          elapsedMs: Date.now() - startedAt,
+          socketId: socket.id,
+        } }, 'Playback command failed');
+        const apiError = {
+          code: 'PLAYBACK_COMMAND_FAILED',
+          message: 'No pudimos ejecutar el comando de reproducción.',
+        };
+        emitError(apiError.code, apiError.message);
+        try {
+          const snapshot = await playbackService!.snapshot(socket.data.userId);
+          ack?.({ status: 'conflict', snapshot, error: apiError });
+          socket.emit('playback:snapshot', snapshot);
+        } catch (snapshotError) {
+          logger?.error({ err: snapshotError, playbackCommand: {
+            command: commandName, outcome: 'snapshot_failure', socketId: socket.id,
+          } }, 'Playback recovery snapshot failed');
+        }
       }
     }
 
@@ -178,6 +240,12 @@ export function createSocketServer(
   });
 
   return io;
+}
+
+function commandIdOf(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object' || !('commandId' in value)) return undefined;
+  const commandId = (value as { commandId?: unknown }).commandId;
+  return typeof commandId === 'string' ? commandId : undefined;
 }
 
 function parseCookie(header: string | undefined, name: string): string | undefined {

@@ -2,6 +2,8 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, effect, inject, signal } from '@angular/core';
 import type {
   ClientToServerEvents,
+  PlaybackClientDiagnostic,
+  PlaybackCommandName,
   PlaybackCommandResult,
   PlaybackSnapshot,
   ResolveTracksResponse,
@@ -13,6 +15,7 @@ import { firstValueFrom } from 'rxjs';
 import { AudioPlayerService } from './audio-player.service';
 import { MediaSessionService } from './media-session.service';
 import { SessionStore } from './session.store';
+import { deliverWithAckRetry } from './playback-command-delivery';
 
 type ControlAction = 'play' | 'pause' | 'next' | 'previous' | 'seek';
 
@@ -29,10 +32,13 @@ export class PlaybackSyncService {
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private leaseExpiry: ReturnType<typeof setTimeout> | null = null;
   private reconcileSequence = 0;
+  private publishInFlight = false;
+  private readonly pendingDiagnostics: PlaybackClientDiagnostic[] = [];
 
   readonly snapshot = signal<PlaybackSnapshot | null>(null);
   readonly connected = signal(false);
   private readonly snapshotFresh = signal(false);
+  private readonly terminalSocketStop = signal(false);
   readonly error = signal<string | null>(null);
   readonly queueTracks = signal<Record<string, Track>>({});
 
@@ -48,20 +54,22 @@ export class PlaybackSyncService {
       },
     });
     this.socket.on('connect', () => {
-      this.snapshotFresh.set(false);
+      this.terminalSocketStop.set(false);
       this.connected.set(true);
       this.error.set(null);
+      this.flushDiagnostics();
       this.socket.emit('playback:sync', { lastRevision: this.snapshot()?.revision ?? null });
     });
-    this.socket.on('disconnect', () => {
+    this.socket.on('disconnect', (reason) => {
       this.connected.set(false);
-      this.snapshotFresh.set(false);
-      if (this.leaseExpiry) clearTimeout(this.leaseExpiry);
-      this.leaseExpiry = null;
-      this.player.pause();
-      this.mediaSession.clear();
+      this.recordDiagnostic({ kind: 'disconnect', reason });
+      if (isTerminalPlaybackDisconnect(reason)) {
+        this.stopForTerminalDisconnect();
+      }
     });
     this.socket.on('connect_error', (error) => {
+      this.recordDiagnostic({ kind: 'connect_error', reason: error.message });
+      if (error.message === 'Authentication required') this.stopForTerminalDisconnect();
       this.error.set(error.message === 'Authentication required'
         ? 'Tu sesión terminó. Inicia sesión nuevamente.'
         : 'No pudimos conectar tus dispositivos.');
@@ -82,7 +90,7 @@ export class PlaybackSyncService {
     effect(() => {
       const snapshot = this.snapshot();
       const track = this.player.track();
-      const ownsCurrentTrack = this.connected()
+      const ownsCurrentTrack = !this.terminalSocketStop()
         && this.snapshotFresh()
         && this.ownsLease(snapshot)
         && Boolean(track)
@@ -108,12 +116,12 @@ export class PlaybackSyncService {
   public async select(track: Track): Promise<void> {
     this.remember(track);
     const snapshot = this.snapshot();
-    if (!snapshot || !this.socket.connected) {
+    if (!snapshot || this.terminalSocketStop()) {
       this.error.set('El hilo todavía se está conectando. Inténtalo de nuevo.');
       return;
     }
-    await this.issue((revision, ack) => this.socket.emit('playback:select', {
-      commandId: crypto.randomUUID(),
+    await this.issue('select', (revision, commandId, ack) => this.socket.emit('playback:select', {
+      commandId,
       expectedRevision: revision,
       trackRef: track.id,
     }, ack));
@@ -127,12 +135,12 @@ export class PlaybackSyncService {
   ): Promise<void> {
     if (!tracks.length || selectedIndex < 0 || selectedIndex >= tracks.length) return;
     tracks.forEach((track) => this.remember(track));
-    if (!this.snapshot() || !this.socket.connected) {
+    if (!this.snapshot() || this.terminalSocketStop()) {
       this.error.set('El hilo todavía se está conectando. Inténtalo de nuevo.');
       return;
     }
-    await this.issue((revision, ack) => this.socket.emit('playback:select-context', {
-      commandId: crypto.randomUUID(), expectedRevision: revision,
+    await this.issue('select-context', (revision, commandId, ack) => this.socket.emit('playback:select-context', {
+      commandId, expectedRevision: revision,
       trackRefs: tracks.map((track) => track.id), selectedIndex, contextType, contextRef,
     }, ack));
   }
@@ -140,8 +148,8 @@ export class PlaybackSyncService {
   public async claimHere(): Promise<void> {
     const snapshot = this.snapshot();
     if (!snapshot) return;
-    await this.issue((revision, ack) => this.socket.emit('playback:claim', {
-      commandId: crypto.randomUUID(),
+    await this.issue('claim', (revision, commandId, ack) => this.socket.emit('playback:claim', {
+      commandId,
       expectedRevision: revision,
     }, ack));
   }
@@ -167,8 +175,8 @@ export class PlaybackSyncService {
   public async removeQueueItem(queueItemId: string): Promise<void> {
     const snapshot = this.snapshot();
     if (!snapshot) return;
-    await this.issue((revision, ack) => this.socket.emit('playback:queue-remove', {
-      commandId: crypto.randomUUID(),
+    await this.issue('queue-remove', (revision, commandId, ack) => this.socket.emit('playback:queue-remove', {
+      commandId,
       expectedRevision: revision,
       queueItemId,
     }, ack));
@@ -183,6 +191,8 @@ export class PlaybackSyncService {
     this.heartbeat = null;
     if (this.leaseExpiry) clearTimeout(this.leaseExpiry);
     this.leaseExpiry = null;
+    this.terminalSocketStop.set(true);
+    this.snapshotFresh.set(false);
     this.socket.disconnect();
     this.snapshot.set(null);
     this.player.pause();
@@ -254,9 +264,9 @@ export class PlaybackSyncService {
     reason: 'user' | 'ended' = 'user',
   ): Promise<void> {
     const snapshot = this.snapshot();
-    if (!snapshot || !this.socket.connected) return;
-    await this.issue((revision, ack) => this.socket.emit('playback:control', {
-      commandId: crypto.randomUUID(),
+    if (!snapshot || this.terminalSocketStop()) return;
+    await this.issue('control', (revision, commandId, ack) => this.socket.emit('playback:control', {
+      commandId,
       expectedRevision: revision,
       action,
       reason,
@@ -266,50 +276,134 @@ export class PlaybackSyncService {
 
   private async publishState(): Promise<void> {
     const snapshot = this.snapshot();
-    if (!snapshot || !this.ownsLease(snapshot) || !this.socket.connected) return;
+    if (!snapshot || !this.ownsLease(snapshot) || !this.socket.connected || this.publishInFlight) return;
     // Loading is not evidence of either playback or pause. Wait for actual
     // progress or a terminal recovery failure before changing durable state.
     if (this.player.requested() && !this.player.playing()
       && ['loading', 'buffering'].includes(this.player.phase())) return;
-    await this.sendCommand((ack) => this.socket.emit('playback:update', {
-      commandId: crypto.randomUUID(),
-      expectedRevision: snapshot.revision,
-      leaseEpoch: snapshot.leaseEpoch,
-      status: this.player.playing() ? 'playing' : 'paused',
-      positionMs: Math.max(0, Math.round(this.player.positionSeconds() * 1_000)),
-    }, ack));
+    const commandId = crypto.randomUUID();
+    this.publishInFlight = true;
+    try {
+      await this.sendCommand('update', commandId, (ack) => this.socket.emit('playback:update', {
+        commandId,
+        expectedRevision: snapshot.revision,
+        leaseEpoch: snapshot.leaseEpoch,
+        status: this.player.playing() ? 'playing' : 'paused',
+        positionMs: Math.max(0, Math.round(this.player.positionSeconds() * 1_000)),
+      }, ack), false);
+    } finally {
+      this.publishInFlight = false;
+    }
   }
 
   private async issue(
-    emit: (revision: number, ack: (result: PlaybackCommandResult) => void) => void,
+    command: PlaybackCommandName,
+    emit: (
+      revision: number,
+      commandId: string,
+      ack: (result: PlaybackCommandResult) => void,
+    ) => void,
   ): Promise<void> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const revision = this.snapshot()?.revision;
       if (revision === undefined) return;
-      const result = await this.sendCommand((ack) => emit(revision, ack));
+      const commandId = crypto.randomUUID();
+      const result = await this.sendCommand(
+        command,
+        commandId,
+        (ack) => emit(revision, commandId, ack),
+        true,
+      );
       if (!result) return;
+      if (result.error) return;
       if (result.status !== 'conflict') return;
     }
     this.error.set('El hilo siguió cambiando en otro dispositivo. Inténtalo nuevamente.');
   }
 
   private async sendCommand(
+    command: PlaybackCommandName,
+    commandId: string,
     emit: (ack: (result: PlaybackCommandResult) => void) => void,
+    interactive: boolean,
   ): Promise<PlaybackCommandResult | null> {
-    const result = await new Promise<PlaybackCommandResult | null>((resolve) => {
-      const timeout = setTimeout(() => resolve(null), 6_000);
-      emit((value) => {
-        clearTimeout(timeout);
-        resolve(value);
-      });
+    const result = await deliverWithAckRetry(emit, {
+      attempts: 2,
+      ackTimeoutMs: 6_000,
+      waitUntilReady: (timeoutMs) => this.waitUntilSocketReady(timeoutMs),
+      onTimeout: (_attempt, elapsedMs) => this.recordDiagnostic({
+        kind: 'ack_timeout', command, commandId, elapsedMs,
+      }),
     });
     if (!result) {
-      this.error.set('El servidor no confirmó el comando.');
+      if (interactive) {
+        this.error.set('No pudimos confirmar el comando. Reconectando el hilo…');
+        if (this.socket.connected) {
+          this.socket.emit('playback:sync', { lastRevision: this.snapshot()?.revision ?? null });
+        }
+      }
       return null;
     }
     this.receive(result.snapshot);
-    if (result.status !== 'conflict') this.error.set(null);
+    if (result.error) {
+      this.error.set(result.error.message);
+    } else if (result.status !== 'conflict') {
+      this.error.set(null);
+    }
     return result;
+  }
+
+  private waitUntilSocketReady(timeoutMs: number): Promise<boolean> {
+    if (this.socket.connected) return Promise.resolve(true);
+    if (this.terminalSocketStop()) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (ready: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        this.socket.off('connect', onConnect);
+        this.socket.off('disconnect', onDisconnect);
+        resolve(ready);
+      };
+      const onConnect = () => finish(true);
+      const onDisconnect = (reason: string) => {
+        if (isTerminalPlaybackDisconnect(reason)) finish(false);
+      };
+      const timeout = setTimeout(() => finish(false), timeoutMs);
+      this.socket.on('connect', onConnect);
+      this.socket.on('disconnect', onDisconnect);
+    });
+  }
+
+  private stopForTerminalDisconnect(): void {
+    this.terminalSocketStop.set(true);
+    this.snapshotFresh.set(false);
+    if (this.leaseExpiry) clearTimeout(this.leaseExpiry);
+    this.leaseExpiry = null;
+    this.player.pause();
+    this.mediaSession.clear();
+  }
+
+  private recordDiagnostic(
+    diagnostic: Omit<PlaybackClientDiagnostic, 'occurredAt'>,
+  ): void {
+    const value: PlaybackClientDiagnostic = {
+      ...diagnostic,
+      occurredAt: new Date().toISOString(),
+    };
+    if (this.socket.connected) {
+      this.socket.emit('playback:diagnostic', value);
+      return;
+    }
+    this.pendingDiagnostics.push(value);
+    if (this.pendingDiagnostics.length > 20) this.pendingDiagnostics.shift();
+  }
+
+  private flushDiagnostics(): void {
+    for (const diagnostic of this.pendingDiagnostics.splice(0)) {
+      this.socket.emit('playback:diagnostic', diagnostic);
+    }
   }
 
   private async loadQueueTracks(snapshot: PlaybackSnapshot): Promise<void> {
@@ -447,4 +541,8 @@ export function estimatedPositionSeconds(snapshot: PlaybackSnapshot, now = Date.
   const anchor = snapshot.positionMs / 1_000;
   if (snapshot.status !== 'playing') return anchor;
   return anchor + Math.max(0, now - Date.parse(snapshot.positionObservedAt)) / 1_000;
+}
+
+export function isTerminalPlaybackDisconnect(reason: string): boolean {
+  return reason === 'io server disconnect' || reason === 'io client disconnect';
 }

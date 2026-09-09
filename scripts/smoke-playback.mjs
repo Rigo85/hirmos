@@ -41,6 +41,20 @@ try {
     commandId: randomUUID(), expectedRevision: result.snapshot.revision, trackRef: tracks[0].id,
   });
   assertAccepted(result, 'first selection');
+  await once(first, 'playback:snapshot');
+  const disconnected = once(first, 'disconnect');
+  const reconnected = once(first, 'connect');
+  const recoveredSnapshot = once(first, 'playback:snapshot');
+  first.io.engine?.close();
+  await disconnected;
+  await reconnected;
+  const recovered = await recoveredSnapshot;
+  if (recovered.activeDeviceId !== firstId
+      || recovered.currentTrackRef !== result.snapshot.currentTrackRef
+      || recovered.revision !== result.snapshot.revision) {
+    throw new Error('Transient reconnect did not recover the durable playback snapshot');
+  }
+  result = { ...result, snapshot: recovered };
   const leaseEpochBeforeRemoteSelection = result.snapshot.leaseEpoch;
   result = await command(second, 'playback:select', {
     commandId: randomUUID(), expectedRevision: result.snapshot.revision, trackRef: tracks[1].id,
@@ -111,6 +125,7 @@ try {
     status: 'ok',
     checks: [
       'single-user-thread', 'exclusive-lease', 'persistent-queue',
+      'transient-reconnect',
       'remote-selection-preserves-lease', 'remote-pause', 'remote-seek',
       'previous', 'lease-transfer',
       'old-owner-rejected', 'queue-removal', 'explicit-conflict', 'idempotency',

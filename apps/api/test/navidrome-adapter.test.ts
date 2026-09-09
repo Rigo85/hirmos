@@ -163,6 +163,31 @@ describe('NavidromeAdapter', () => {
     expect(request!.url.href).not.toContain('secret');
   });
 
+  it('keeps streaming after the OpenSubsonic header timeout has elapsed', async () => {
+    const fetchImplementation = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+      const signal = init?.signal;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          const timeout = setTimeout(() => {
+            controller.enqueue(new Uint8Array([7]));
+            controller.close();
+          }, 3_600);
+          signal?.addEventListener('abort', () => {
+            clearTimeout(timeout);
+            controller.error(signal.reason);
+          }, { once: true });
+        },
+      }), { headers: { 'content-type': 'audio/flac' } });
+    });
+    const adapter = new NavidromeAdapter({
+      baseUrl: new URL('https://music.example'), username: 'service', password: 'secret',
+      fetchImplementation: fetchImplementation as typeof fetch,
+    });
+
+    const media = await adapter.getStream('slow-track');
+    await expect(new Response(media.body).arrayBuffer()).resolves.toEqual(new Uint8Array([7]).buffer);
+  }, 5_000);
+
   it('requests an explicit cover size and preserves its validator', async () => {
     let request: URL | null = null;
     const fetchImplementation = vi.fn(async (input: URL | RequestInfo) => {

@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import {
   configureMusicSourceRequestSchema,
@@ -12,11 +12,13 @@ import {
   MusicSourceUnavailableError,
 } from '../music-source/music-source-service.js';
 import { ImageCachePendingError } from '../cache/image-cache-service.js';
+import type { CatalogSyncControl } from '../cache/catalog-sync-coordinator.js';
 import { requireAdmin, requireAuthentication } from './auth-routes.js';
 
 export async function registerMusicSourceRoutes(
   app: FastifyInstance,
   service: MusicSourceService | undefined,
+  catalogSync?: CatalogSyncControl,
 ): Promise<void> {
   app.get('/api/admin/music-source', async (request, reply) => {
     const denied = requireAdmin(request, reply);
@@ -75,6 +77,46 @@ export async function registerMusicSourceRoutes(
         requestId: request.id,
       });
     }
+  });
+
+  app.get('/api/admin/music-source/sync', async (request, reply) => {
+    const denied = requireAdmin(request, reply);
+    if (denied) return denied;
+    if (!service || !catalogSync) return notConfigured(request, reply);
+    return reply.send(catalogSync.status());
+  });
+
+  app.post('/api/admin/music-source/sync', async (request, reply) => {
+    const denied = requireAdmin(request, reply);
+    if (denied) return denied;
+    if (!service || !catalogSync) return notConfigured(request, reply);
+    if (!await service.currentForAdmin()) {
+      return reply.code(409).send({
+        code: 'MUSIC_SOURCE_NOT_CONFIGURED',
+        message: 'Configura una fuente musical antes de sincronizar.',
+        requestId: request.id,
+      });
+    }
+
+    const trigger = catalogSync.trigger();
+    if (trigger.started) {
+      request.log.info({ catalogSync: { trigger: 'manual' } }, 'Catalog sync requested');
+      void trigger.completion.then(({ counts, followUpError }) => {
+        request.log.info(
+          { catalogSync: { trigger: 'manual', outcome: 'success', ...counts } },
+          'Manual catalog sync completed',
+        );
+        if (followUpError) {
+          request.log.warn({ err: followUpError }, 'Catalog follow-up scheduling failed');
+        }
+      }).catch((error: unknown) => {
+        request.log.warn({
+          err: error,
+          catalogSync: { trigger: 'manual', outcome: 'failure' },
+        }, 'Manual catalog sync failed');
+      });
+    }
+    return reply.code(202).send({ started: trigger.started, ...catalogSync.status() });
   });
 
   app.get('/api/music/search', async (request, reply) => {
@@ -320,13 +362,25 @@ export async function registerMusicSourceRoutes(
       if (!reply.raw.writableFinished) controller.abort();
     });
     try {
+      const startedAt = Date.now();
       const range = normalizeRange(request.headers.range);
       const media = await service.stream(
         reference,
         range,
         controller.signal,
       );
-      return sendMedia(reply, media, 'private, no-store', controller.signal);
+      request.log.info({ audioStream: {
+        phase: 'headers',
+        upstreamLatencyMs: Date.now() - startedAt,
+        status: media.status,
+        rangeRequested: Boolean(range),
+        contentLength: media.contentLength,
+      } }, 'Audio stream headers received');
+      return sendMedia(reply, media, 'private, no-store', controller.signal, {
+        request,
+        startedAt,
+        rangeRequested: Boolean(range),
+      });
     } catch (error) {
       return mediaFailure(request, reply, error);
     }
@@ -462,6 +516,11 @@ function sendMedia(
   media: Awaited<ReturnType<MusicSourceService['stream']>>,
   cacheControl: string,
   signal?: AbortSignal,
+  observation?: {
+    request: FastifyRequest;
+    startedAt: number;
+    rangeRequested: boolean;
+  },
 ): FastifyReply {
   reply.code(media.status);
   reply.header('cache-control', cacheControl);
@@ -470,10 +529,46 @@ function sendMedia(
   if (media.contentRange) reply.header('content-range', media.contentRange);
   if (media.acceptRanges) reply.header('accept-ranges', media.acceptRanges);
   if (media.etag) reply.header('etag', media.etag);
-  return reply.send(Readable.fromWeb(
+  const source = Readable.fromWeb(
     media.body as unknown as NodeReadableStream<Uint8Array>,
     { signal },
-  ));
+  );
+  if (!observation) return reply.send(source);
+
+  let bytesSent = 0;
+  let recorded = false;
+  const meter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytesSent += chunk.byteLength;
+      callback(null, chunk);
+    },
+  });
+  const record = (outcome: 'complete' | 'client_abort' | 'upstream_error', error?: unknown) => {
+    if (recorded) return;
+    recorded = true;
+    const fields = { audioStream: {
+      phase: 'body',
+      outcome,
+      elapsedMs: Date.now() - observation.startedAt,
+      bytesSent,
+      status: media.status,
+      rangeRequested: observation.rangeRequested,
+    } };
+    if (outcome === 'upstream_error') {
+      observation.request.log.warn({ ...fields, err: error }, 'Audio stream failed after headers');
+    } else {
+      observation.request.log.info(fields, 'Audio stream closed');
+    }
+  };
+  source.once('error', (error) => {
+    record(signal?.aborted ? 'client_abort' : 'upstream_error', error);
+    meter.destroy(error);
+  });
+  reply.raw.once('finish', () => record('complete'));
+  reply.raw.once('close', () => {
+    if (!reply.raw.writableFinished) record('client_abort');
+  });
+  return reply.send(source.pipe(meter));
 }
 
 function normalizeRange(value: string | undefined): string | undefined {

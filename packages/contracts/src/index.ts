@@ -99,6 +99,26 @@ export const adminMusicSourceSchema = musicSourceSummarySchema.extend({
 });
 export type AdminMusicSource = z.infer<typeof adminMusicSourceSchema>;
 
+export const catalogSyncCountsSchema = z.object({
+  artists: z.number().int().nonnegative(),
+  albums: z.number().int().nonnegative(),
+  tracks: z.number().int().nonnegative(),
+});
+export type CatalogSyncCounts = z.infer<typeof catalogSyncCountsSchema>;
+
+export const catalogSyncStatusSchema = z.object({
+  status: z.enum(['idle', 'running', 'succeeded', 'failed']),
+  startedAt: z.iso.datetime().nullable(),
+  completedAt: z.iso.datetime().nullable(),
+  counts: catalogSyncCountsSchema.nullable(),
+});
+export type CatalogSyncStatus = z.infer<typeof catalogSyncStatusSchema>;
+
+export const catalogSyncTriggerResponseSchema = catalogSyncStatusSchema.extend({
+  started: z.boolean(),
+});
+export type CatalogSyncTriggerResponse = z.infer<typeof catalogSyncTriggerResponseSchema>;
+
 export const trackSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -333,8 +353,23 @@ export const playbackCommandStatusSchema = z.enum(['accepted', 'duplicate', 'con
 export type PlaybackCommandResult = {
   status: z.infer<typeof playbackCommandStatusSchema>;
   snapshot: PlaybackSnapshot;
+  error?: ApiError;
 };
 export type PlaybackCommandAck = (result: PlaybackCommandResult) => void;
+
+export const playbackCommandNameSchema = z.enum([
+  'claim', 'select', 'select-context', 'update', 'control', 'queue-remove',
+]);
+export type PlaybackCommandName = z.infer<typeof playbackCommandNameSchema>;
+export const playbackClientDiagnosticSchema = z.object({
+  kind: z.enum(['disconnect', 'connect_error', 'ack_timeout']),
+  occurredAt: z.iso.datetime(),
+  reason: z.string().max(200).optional(),
+  command: playbackCommandNameSchema.optional(),
+  commandId: z.uuid().optional(),
+  elapsedMs: z.number().int().nonnegative().max(120_000).optional(),
+});
+export type PlaybackClientDiagnostic = z.infer<typeof playbackClientDiagnosticSchema>;
 
 export interface ServerToClientEvents {
   'playback:snapshot': (snapshot: PlaybackSnapshot) => void;
@@ -342,6 +377,7 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
+  'playback:diagnostic': (diagnostic: PlaybackClientDiagnostic) => void;
   'playback:sync': (command: { lastRevision: number | null }) => void;
   'playback:claim': (
     command: { commandId: string; expectedRevision: number },

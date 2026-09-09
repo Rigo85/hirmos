@@ -8,6 +8,28 @@
     <h1>Fuente musical</h1>
     <p class="muted">Conecta la biblioteca que Hirmos presentará a todos los oyentes.</p>
 
+    <article class="source-card catalog-sync-card">
+      <div class="source-card__status">
+        <span class="source-icon" aria-hidden="true">↻</span>
+        <div>
+          <strong>Catálogo local</strong>
+          <small>Última sincronización: {{ formatDate(source()?.lastSyncedAt) }}</small>
+        </div>
+        <span class="status-badge" [class.status-badge--working]="syncStatus().status === 'running'" [class.status-badge--error]="syncStatus().status === 'failed'">{{ syncBadge() }}</span>
+      </div>
+      <div class="catalog-sync-card__body">
+        <div>
+          <p>Busca ahora artistas, álbumes y canciones nuevos en la fuente. El barrido continúa en segundo plano y no interrumpe la biblioteca existente.</p>
+          @if (syncMessage()) {
+            <p class="catalog-sync-card__feedback" [class.success-message]="syncMessage()!.kind === 'success'" [class.form-error]="syncMessage()!.kind === 'error'" role="status" aria-live="polite">{{ syncMessage()!.text }}</p>
+          }
+        </div>
+        <button class="outline-button" type="button" (click)="syncNow()" [disabled]="!source() || syncSubmitting() || syncStatus().status === 'running'">
+          {{ syncSubmitting() ? 'Iniciando…' : syncStatus().status === 'running' ? 'Sincronizando…' : 'Sincronizar ahora' }}
+        </button>
+      </div>
+    </article>
+
     <article class="source-card">
       <div class="source-card__status"><span class="source-icon">♫</span><div><strong>{{ source() ? source()!.name : 'Sin fuente configurada' }}</strong><small>{{ source() ? source()!.baseUrl : 'Agrega un servidor compatible con OpenSubsonic.' }}</small></div><span class="status-badge">{{ source()?.healthy ? 'Conectada' : 'Pendiente' }}</span></div>
       <form class="source-form" [formGroup]="form" (ngSubmit)="save()">

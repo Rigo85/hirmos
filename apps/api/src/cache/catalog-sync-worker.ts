@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { MusicSourceService } from '../music-source/music-source-service.js';
+import type { CatalogSyncControl } from './catalog-sync-coordinator.js';
 
 export class CatalogSyncWorker {
   private interval: NodeJS.Timeout | null = null;
@@ -7,10 +7,9 @@ export class CatalogSyncWorker {
   private running = false;
 
   public constructor(
-    private readonly service: MusicSourceService,
+    private readonly coordinator: CatalogSyncControl,
     private readonly logger: Pick<FastifyBaseLogger, 'info' | 'warn'>,
     private readonly intervalMs: number,
-    private readonly afterSync?: () => Promise<void>,
   ) {}
 
   public start(): void {
@@ -31,13 +30,16 @@ export class CatalogSyncWorker {
   private async run(): Promise<void> {
     if (this.running) return;
     this.running = true;
+    const trigger = this.coordinator.trigger();
+    if (!trigger.started) {
+      this.running = false;
+      return;
+    }
     try {
-      const counts = await this.service.syncCatalog();
+      const { counts, followUpError } = await trigger.completion;
       this.logger.info({ catalogSync: { outcome: 'success', ...counts } }, 'Catalog sync completed');
-      try {
-        await this.afterSync?.();
-      } catch (error) {
-        this.logger.warn({ err: error }, 'Catalog follow-up scheduling failed');
+      if (followUpError) {
+        this.logger.warn({ err: followUpError }, 'Catalog follow-up scheduling failed');
       }
     } catch (error) {
       this.logger.warn({
