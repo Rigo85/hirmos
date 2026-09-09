@@ -5,40 +5,38 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#0b0d11" />
-    <title>Hirmos · Laboratorio de audio</title>
+    <title>Hirmos · Laboratorio de tono</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="#top" aria-label="Hirmos Audio Lab">
+      <a class="brand" href="#top" aria-label="Hirmos Tone Lab">
         <span class="brand__mark" aria-hidden="true"><i></i><i></i><i></i></span>
         <span>Hirmos</span>
-        <small>Audio Lab</small>
+        <small>Tone Lab</small>
       </a>
-      <span class="isolation"><i></i>Aislado · no modifica Hirmos</span>
+      <span class="isolation"><i></i>Aislado · guardado solo en este navegador</span>
     </header>
 
     <main id="top">
       <section class="hero">
         <div>
-          <p class="eyebrow">PRUEBA DE PROCESAMIENTO</p>
-          <h1>Escucha antes de integrar.</h1>
+          <p class="eyebrow">CONTROL TONAL DE TRES BANDAS</p>
+          <h1>Ajusta lo que realmente escuchas.</h1>
           <p class="hero__copy">
-            Compara la señal original con perfiles versionados y un ajuste
-            conservador derivado de la pista. El archivo nunca sale del navegador.
+            Graves, medios y agudos parten del centro. No necesitas reconocer
+            frecuencias ni elegir un género para probar una preferencia.
           </p>
         </div>
         <div class="hero__actions">
           <label class="file-button" for="audio-file">Elegir una canción</label>
           <input id="audio-file" type="file" accept="audio/*" />
-          <button id="load-demo" class="button button--ghost" type="button">
-            Cargar señal técnica
-          </button>
+          <button id="load-demo" class="button button--ghost" type="button">Cargar señal técnica</button>
         </div>
       </section>
 
       <p id="status" class="status" role="status" aria-live="polite">
-        Elige un archivo o carga la señal técnica para comenzar.
+        Elige un archivo. Puedes mover los controles incluso antes de reproducir.
       </p>
 
       <section class="player card" aria-label="Reproductor de prueba">
@@ -47,14 +45,14 @@
         </button>
         <div class="track">
           <strong id="track-name">Ninguna pista cargada</strong>
-          <span id="track-detail">El audio se procesa solamente en esta pestaña</span>
+          <span id="track-detail">El archivo no sale de esta pestaña</span>
         </div>
         <span id="current-time" class="time">0:00</span>
         <input id="seek" class="seek" type="range" min="0" max="1000" value="0" disabled aria-label="Posición" />
         <span id="duration" class="time">0:00</span>
         <button id="ab-toggle" class="ab-toggle" type="button" disabled aria-pressed="false">
-          <span>A/B</span>
-          <strong id="ab-state">Procesada</strong>
+          <span>COMPARAR A/B</span>
+          <strong id="ab-state">Con EQ</strong>
         </button>
       </section>
 
@@ -62,125 +60,159 @@
         <section class="controls card">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">RECETA</p>
-              <h2>Carácter y adaptación</h2>
+              <p class="eyebrow">MODO</p>
+              <h2>¿Cuándo se aplica?</h2>
             </div>
-            <span id="recipe-version" class="version">v0.1</span>
+            <span id="recipe-version" class="version">0.3.1</span>
           </div>
 
-          <label class="field">
-            <span>Modo</span>
-            <select id="profile">
-              <option value="flat">Flat · sin ecualización</option>
-              <option value="auto" selected>Automático</option>
-              <option value="rock">Rock</option>
-              <option value="pop">Pop</option>
-              <option value="electronic">Electrónica</option>
-              <option value="acoustic">Acústica</option>
-              <option value="classical">Clásica</option>
-              <option value="diagnostic">Prueba de cableado · cambio extremo</option>
-            </select>
-          </label>
+          <div id="eq-modes" class="mode-selector" role="radiogroup" aria-label="Modo de ecualización">
+            <button type="button" role="radio" aria-checked="false" data-mode="off">Sin EQ</button>
+            <button type="button" role="radio" aria-checked="true" data-mode="general">General</button>
+            <button type="button" role="radio" aria-checked="false" data-mode="contextual">Según la música</button>
+          </div>
+          <p id="mode-description" class="mode-description"></p>
 
-          <label class="field">
-            <span>Etiquetas <small>separadas por comas</small></span>
-            <input id="tags" type="text" placeholder="hard rock, alternative, 2000s" />
-          </label>
-
-          <label class="field field--range">
-            <span>Intensidad <output id="intensity-value">60 %</output></span>
-            <input id="intensity" type="range" min="0" max="100" value="60" />
-          </label>
-
-          <label class="switch-row">
-            <span>
-              <strong>Ajuste por pista</strong>
-              <small>Reduce resonancias medidas; nunca las amplifica.</small>
-            </span>
-            <input id="track-adaptation" type="checkbox" checked />
-          </label>
-
-          <label class="switch-row">
-            <span>
-              <strong>EQ dinámica</strong>
-              <small>Actúa solo cuando una banda excede su umbral.</small>
-            </span>
-            <input id="dynamic-eq" type="checkbox" checked />
-          </label>
-
-          <div class="flat-note" id="flat-note" hidden>
-            Flat usa la ruta seca: 0 dB de EQ, sin adaptación ni EQ dinámica.
+          <div id="context-editor" class="context-editor" hidden>
+            <div class="context-heading">
+              <div>
+                <strong>Crear o editar un ajuste</strong>
+                <small>El más específico gana durante la resolución automática.</small>
+              </div>
+              <span>canción › álbum › artista › género › general</span>
+            </div>
+            <div class="scope-selector" role="radiogroup" aria-label="Alcance del ajuste">
+              <button type="button" role="radio" aria-checked="true" data-scope="track">Canción</button>
+              <button type="button" role="radio" aria-checked="false" data-scope="album">Álbum</button>
+              <button type="button" role="radio" aria-checked="false" data-scope="artist">Artista</button>
+              <button type="button" role="radio" aria-checked="false" data-scope="genre">Género</button>
+            </div>
+            <label class="field context-field">
+              <span id="context-label">Nombre de la canción</span>
+              <input id="context-value" type="text" placeholder="Jet City Woman" autocomplete="off" />
+            </label>
+            <div class="context-actions">
+              <button id="save-context" class="button" type="button">Guardar para esta canción</button>
+              <button id="delete-context" class="button button--ghost" type="button" disabled>Eliminar ajuste</button>
+            </div>
+            <p id="context-status" class="context-status"></p>
           </div>
 
-          <div class="diagnostic-note" id="diagnostic-note" hidden>
-            <strong>No es un perfil musical.</strong> Aplica una curva extrema para
-            comprobar que A/B cambia realmente la señal. La diferencia debe ser obvia.
+          <div class="active-profile" aria-live="polite">
+            <span>AJUSTE ACTIVO</span>
+            <strong id="active-profile">Ajuste general</strong>
+            <small id="active-values">Graves 0.0 · Medios 0.0 · Agudos 0.0 dB</small>
+          </div>
+        </section>
+
+        <section class="tone card" aria-labelledby="tone-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">TONO</p>
+              <h2 id="tone-title">Baja o sube desde el centro</h2>
+            </div>
+            <button id="reset-tone" class="text-button" type="button">Restablecer</button>
           </div>
 
-          <button id="export-recipe" class="button button--secondary" type="button" disabled>
-            Exportar receta JSON
-          </button>
+          <div class="tuning-panel">
+            <div>
+              <strong>Cobertura experimental</strong>
+              <small id="tuning-description">Cobertura intermedia y punto de partida actual del laboratorio.</small>
+            </div>
+            <div class="tuning-selector" role="radiogroup" aria-label="Cobertura de las bandas">
+              <button type="button" role="radio" aria-checked="false" data-tuning="hifi">Hi-Fi</button>
+              <button type="button" role="radio" aria-checked="true" data-tuning="wide">Amplia</button>
+              <button type="button" role="radio" aria-checked="false" data-tuning="audible">Más perceptible</button>
+            </div>
+          </div>
+
+          <div class="contrast-panel">
+            <div>
+              <strong>Rango de prueba</strong>
+              <small id="range-description">±6 dB · ajuste normal del laboratorio.</small>
+            </div>
+            <div class="range-selector" role="radiogroup" aria-label="Rango de ganancia">
+              <button type="button" role="radio" aria-checked="true" data-gain-range="6">Normal ±6</button>
+              <button type="button" role="radio" aria-checked="false" data-gain-range="12">Diagnóstico ±12</button>
+            </div>
+            <div class="contrast-actions">
+              <button id="warm-contrast" type="button">Grave +12 · Agudo −12</button>
+              <button id="bright-contrast" type="button">Grave −12 · Agudo +12</button>
+            </div>
+          </div>
+
+          <div class="tone-controls">
+            <label class="tone-control" for="bass">
+              <span class="tone-control__value" id="bass-value">0.0 dB</span>
+              <span class="tone-control__high">Más cuerpo</span>
+              <input id="bass" type="range" min="-6" max="6" value="0" step="0.5" aria-label="Graves" />
+              <i aria-hidden="true"></i>
+              <strong>Graves</strong>
+              <small>Más liviano</small>
+            </label>
+            <label class="tone-control" for="mid">
+              <span class="tone-control__value" id="mid-value">0.0 dB</span>
+              <span class="tone-control__high">Más presente</span>
+              <input id="mid" type="range" min="-6" max="6" value="0" step="0.5" aria-label="Medios" />
+              <i aria-hidden="true"></i>
+              <strong>Medios</strong>
+              <small>Más atrás</small>
+            </label>
+            <label class="tone-control" for="treble">
+              <span class="tone-control__value" id="treble-value">0.0 dB</span>
+              <span class="tone-control__high">Más brillo</span>
+              <input id="treble" type="range" min="-6" max="6" value="0" step="0.5" aria-label="Agudos" />
+              <i aria-hidden="true"></i>
+              <strong>Agudos</strong>
+              <small>Más suave</small>
+            </label>
+          </div>
+          <p class="tone-note" id="tone-note">
+            El rango normal está limitado a ±6 dB. Subir agudos no es una corrección auditiva;
+            aquí solo estamos encontrando una preferencia de escucha.
+          </p>
         </section>
 
         <section class="visual card">
           <div class="section-heading">
             <div>
               <p class="eyebrow">RESPUESTA</p>
-              <h2>Lo que está haciendo</h2>
+              <h2>Forma aproximada de la curva</h2>
             </div>
-            <span id="headroom" class="headroom">Preamp 0.0 dB</span>
+            <span id="headroom" class="headroom">Reserva 0.0 dB</span>
           </div>
           <canvas id="curve" width="960" height="360" aria-label="Curva de ecualización"></canvas>
-          <div id="band-values" class="band-values" aria-label="Ganancia por banda"></div>
-          <div class="dynamic-status">
-            <span>Reducción dinámica</span>
-            <div id="dynamic-values"></div>
+          <div class="band-values" aria-label="Frecuencias de referencia">
+            <div class="band"><span>Graves</span><strong id="bass-frequency">120 Hz</strong><small>low-shelf</small></div>
+            <div class="band"><span>Medios</span><strong id="mid-frequency">1 kHz</strong><small>campana amplia</small></div>
+            <div class="band"><span>Agudos</span><strong id="treble-frequency">6 kHz</strong><small>high-shelf</small></div>
           </div>
         </section>
 
-        <section class="metrics card">
+        <section class="saved card">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">EVALUACIÓN INICIAL</p>
-              <h2>Medidas de la pista</h2>
+              <p class="eyebrow">ESTE NAVEGADOR</p>
+              <h2>Ajustes específicos guardados</h2>
             </div>
-            <span class="version">local</span>
+            <span id="saved-count" class="version">0 ajustes</span>
           </div>
-          <div id="metrics" class="metric-grid">
-            <p class="empty">Carga una pista para analizarla.</p>
+          <div id="saved-profiles" class="saved-profiles">
+            <p class="empty">Todavía no has guardado ajustes para música concreta.</p>
           </div>
-          <p class="disclaimer">
-            Este prototipo mide pico de muestra y RMS, no LUFS ni true peak.
-            Esas medidas se incorporarán en el analizador servidor si la escucha se acepta.
-          </p>
-        </section>
-
-        <section class="affinity card">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">AFINIDAD</p>
-              <h2>Perfiles sugeridos</h2>
-            </div>
-            <span class="version">multietiqueta</span>
-          </div>
-          <div id="affinities" class="affinity-list">
-            <p class="empty">Las etiquetas y el análisis alimentarán esta estimación.</p>
-          </div>
-          <ul id="evidence" class="evidence"></ul>
         </section>
       </div>
 
       <section class="protocol card">
         <div>
-          <p class="eyebrow">PROTOCOLO DE ESCUCHA</p>
-          <h2>No decidas por más volumen</h2>
+          <p class="eyebrow">PRUEBA SIMPLE</p>
+          <h2>No busques “la respuesta correcta”</h2>
         </div>
         <ol>
-          <li>Escucha 20–30 segundos en <strong>Original</strong>.</li>
-          <li>Cambia a <strong>Procesada</strong> sin mover el volumen.</li>
-          <li>Prueba Flat, Automático y el perfil que sugieren las etiquetas.</li>
-          <li>Busca claridad sin aspereza, graves controlados y ausencia de bombeo.</li>
-          <li>Repite con auriculares, altavoces y teléfono.</li>
+          <li>Empieza en General con las tres bandas en cero.</li>
+          <li>Mueve una sola banda a +3 o −3 dB para reconocer su efecto.</li>
+          <li>Alterna A/B manteniendo el mismo volumen del equipo.</li>
+          <li>Cuando te guste, prueba ajustes menores de 0.5 dB.</li>
         </ol>
       </section>
     </main>

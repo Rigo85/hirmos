@@ -26,6 +26,8 @@ export class AudioEngine {
   private timer: number | null = null;
   private recipe: AudioRecipe | null = null;
   private originalSelected = false;
+  private comparisonDryOffsetDb = 0;
+  private comparisonWetOffsetDb = 0;
 
   constructor(audio: HTMLAudioElement) {
     this.audio = audio;
@@ -49,6 +51,11 @@ export class AudioEngine {
       return;
     }
     const now = context.currentTime;
+    if (this.safetyCompressor) {
+      const manualTone = recipe.engineVersion.startsWith('hirmos-tone-lab/');
+      setAudioParam(this.safetyCompressor.threshold, manualTone ? 0 : -3, context, now, 0.02);
+      setAudioParam(this.safetyCompressor.knee, manualTone ? 0 : 2, context, now, 0.02);
+    }
     this.staticFilters.forEach((filter, index) => {
       const band = recipe.bands[index];
       const type = index === 0 ? 'lowshelf' : index === recipe.bands.length - 1 ? 'highshelf' : 'peaking';
@@ -57,11 +64,15 @@ export class AudioEngine {
       setAudioParam(filter.Q, type === 'peaking' ? 0.85 : 0.7, context, now, 0.025);
       setAudioParam(filter.gain, band?.gainDb ?? 0, context, now, 0.035);
     });
-    const preamp = dbToGain(recipe.preampDb);
-    if (this.dryTrim) setAudioParam(this.dryTrim.gain, preamp, context, now, 0.025);
-    if (this.wetPreamp) setAudioParam(this.wetPreamp.gain, preamp, context, now, 0.025);
+    this.applyComparisonTrims(now);
     this.configureDynamicBands(recipe.dynamicRules);
     this.applyRoute();
+  }
+
+  setComparisonTrims(dryOffsetDb: number, wetOffsetDb: number): void {
+    this.comparisonDryOffsetDb = dryOffsetDb;
+    this.comparisonWetOffsetDb = wetOffsetDb;
+    if (this.context) this.applyComparisonTrims(this.context.currentTime);
   }
 
   selectOriginal(selected: boolean): void {
@@ -227,6 +238,18 @@ export class AudioEngine {
     this.wetSelector.gain.cancelScheduledValues(now);
     setAudioParam(this.drySelector.gain, original ? 1 : 0, context, now, 0.008);
     setAudioParam(this.wetSelector.gain, original ? 0 : 1, context, now, 0.008);
+  }
+
+  private applyComparisonTrims(now: number): void {
+    const context = this.context;
+    const recipe = this.recipe;
+    if (!context || !recipe) return;
+    if (this.dryTrim) {
+      setAudioParam(this.dryTrim.gain, dbToGain(recipe.preampDb + this.comparisonDryOffsetDb), context, now, 0.025);
+    }
+    if (this.wetPreamp) {
+      setAudioParam(this.wetPreamp.gain, dbToGain(recipe.preampDb + this.comparisonWetOffsetDb), context, now, 0.025);
+    }
   }
 }
 

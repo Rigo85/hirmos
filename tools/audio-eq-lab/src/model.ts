@@ -1,8 +1,16 @@
 export const ANALYSIS_FREQUENCIES = [63, 125, 250, 500, 1000, 2000, 4000, 8000, 12000] as const;
 export const EQ_FREQUENCIES = [80, 250, 1000, 3500, 10000] as const;
 
-export type ProfileId = 'flat' | 'rock' | 'pop' | 'electronic' | 'acoustic' | 'classical';
-export type ProfileSelection = ProfileId | 'auto' | 'diagnostic';
+export type StyleProfileId = 'rock' | 'pop' | 'electronic' | 'acoustic' | 'classical';
+export type InterventionLevel = 'off' | 'gentle' | 'balanced' | 'intense';
+export type RecipeSelection = InterventionLevel | 'diagnostic';
+export type TagScope = 'track' | 'album' | 'artist';
+
+export interface ScopedTags {
+  track: string[];
+  album: string[];
+  artist: string[];
+}
 
 export interface SpectrumBand {
   frequency: number;
@@ -21,6 +29,15 @@ export interface TrackAnalysis {
   clippedRatio: number;
   impulseCandidates: number;
   spectrum: SpectrumBand[];
+  auditionSegments: AuditionSegment[];
+}
+
+export interface AuditionSegment {
+  id: string;
+  label: string;
+  startSeconds: number;
+  durationSeconds: number;
+  rmsDbfs: number;
 }
 
 export interface DynamicRule {
@@ -34,8 +51,8 @@ export interface DynamicRule {
   releaseMs: number;
 }
 
-export interface ProfileDefinition {
-  id: ProfileId;
+export interface StyleProfileDefinition {
+  id: StyleProfileId;
   label: string;
   description: string;
   gainsDb: readonly number[];
@@ -44,13 +61,14 @@ export interface ProfileDefinition {
 }
 
 export interface ProfileAffinity {
-  profileId: Exclude<ProfileId, 'flat'>;
+  profileId: StyleProfileId;
   score: number;
 }
 
 export interface ProfileInference {
   affinities: ProfileAffinity[];
   evidence: string[];
+  confidence: number;
 }
 
 export interface RecipeBand {
@@ -61,9 +79,9 @@ export interface RecipeBand {
 }
 
 export interface AudioRecipe {
-  schemaVersion: 1;
+  schemaVersion: 2;
   engineVersion: string;
-  selection: ProfileSelection;
+  selection: RecipeSelection;
   resolvedLabel: string;
   intensity: number;
   bypass: boolean;
@@ -75,4 +93,11 @@ export interface AudioRecipe {
   affinities: ProfileAffinity[];
   evidence: string[];
   analysis: TrackAnalysis | null;
+}
+
+export interface ComparisonTrims {
+  dryDb: number;
+  wetDb: number;
+  measuredDeltaDb: number;
+  method: 'segment-rms-static-chain';
 }

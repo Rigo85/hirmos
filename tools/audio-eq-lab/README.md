@@ -18,40 +18,38 @@ exponer el laboratorio a Internet.
 
 ## Qué valida esta versión
 
-- ruta `Flat` seca y sin ninguna ecualización;
-- perfiles Rock, Pop, Electrónica, Acústica y Clásica versionados;
-- modo Automático que mezcla hasta tres perfiles usando etiquetas y rasgos
-  acústicos de bajo peso;
-- análisis local de pico de muestra, RMS, crest factor, muestras cercanas al
-  límite, impulsos candidatos y distribución espectral;
-- reducción estática conservadora de resonancias, sin boosts correctivos;
-- tres bandas de EQ dinámica acotadas;
-- reserva automática de preamp para las ganancias introducidas;
-- comparación A/B con el mismo preamp en ambas rutas;
-- prueba de cableado extrema que separa un fallo de ruteo de una curva musical
-  demasiado sutil;
-- exportación de análisis, evidencia y receta como JSON.
+- ruta `Sin EQ` seca y sin ninguna ecualización;
+- control tonal manual de tres bandas anchas y tres coberturas temporales para
+  comparar: Hi-Fi (100 Hz/1 kHz/10 kHz), Amplia (120 Hz/1 kHz/6 kHz) y Más
+  perceptible (150 Hz/1,2 kHz/4 kHz);
+- controles centrados en 0 dB, con rango de -6 a +6 dB y pasos de 0,5 dB;
+- rango diagnóstico temporal de ±12 dB con contrastes grave arriba/agudo abajo
+  y el inverso; `Restablecer` recupera el modo, rango y curva anteriores;
+- modos `Sin EQ`, `General` y `Según la música`;
+- ajustes contextuales para canción, álbum, artista y género, resueltos con la
+  precedencia canción → álbum → artista → género → general;
+- persistencia exclusivamente local al navegador para probar la interacción;
+- reserva común de preamp en ambas rutas cuando existe boost, para reducir el
+  riesgo de saturación sin favorecer A/B por volumen;
+- comparación directa entre Original y Con EQ;
+- curva de respuesta visible y actualización suave de los filtros.
 
-La señal técnica incorporada solo comprueba el cableado y la reacción del
-motor. La aceptación de calidad debe hacerse con música real y distintos
+La señal técnica incorporada comprueba el cableado y permite reconocer cada
+banda. La aceptación de preferencia debe hacerse con música real y distintos
 dispositivos de salida.
-
-Antes de evaluar perfiles, seleccionar **Prueba de cableado · cambio extremo**
-y alternar A/B. No es una propuesta sonora: la diferencia debe ser radical. Si
-no lo es, se debe tratar como un fallo técnico y no continuar la escucha.
 
 ## Límites deliberados
 
-- El análisis del navegador no es EBU R128: muestra RMS y pico de muestra, no
-  LUFS ni true peak.
-- El compresor de seguridad de Web Audio no se presenta como limitador true
-  peak.
-- Los impulsos son candidatos heurísticos; este laboratorio no modifica ni
-  repara el archivo.
-- Las curvas son hipótesis iniciales moderadas, no estándares universales por
-  género.
-- No hay persistencia ni aprendizaje. El JSON exportado permite comparar
-  resultados sin convertirlos todavía en estado de Hirmos.
+- No analiza ni repara chasquidos, clipping o defectos del archivo.
+- No compensa una pérdida auditiva ni reemplaza una evaluación audiológica.
+- El género no genera curvas automáticamente; solo identifica un ajuste que el
+  usuario creó de forma explícita.
+- La persistencia usa `localStorage`: no representa todavía sincronización por
+  usuario, dispositivo ni PostgreSQL.
+- El rango ±12 dB solo descarta un procesamiento demasiado sutil o un fallo de
+  ruteo; no debe guardarse como recomendación musical sin pruebas posteriores.
+- La cadena automática anterior se conserva en módulos y pruebas como
+  exploración, pero ya no dirige la interfaz principal del laboratorio.
 
 ## Verificación
 

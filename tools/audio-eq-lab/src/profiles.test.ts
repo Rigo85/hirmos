@@ -1,76 +1,71 @@
 import { describe, expect, it } from 'vitest';
-import type { TrackAnalysis } from './model';
-import { buildRecipe, inferProfiles } from './profiles';
+import type { ScopedTags, TrackAnalysis } from './model';
+import { buildRecipe, inferProfiles, recipeDistance } from './profiles';
 
-describe('profile inference', () => {
-  it('usa etiquetas como evidencia dominante y conserva mezcla multietiqueta', () => {
-    const inference = inferProfiles(['hard rock', 'alternative rock', 'electronic'], null);
+describe('semantic inference', () => {
+  it('prioriza pista sobre álbum y artista sin perder evidencia multietiqueta', () => {
+    const inference = inferProfiles({
+      track: ['progressive metal'],
+      album: ['electronic'],
+      artist: ['pop'],
+    }, null);
 
     expect(inference.affinities[0]?.profileId).toBe('rock');
     expect(inference.affinities.find((item) => item.profileId === 'electronic')?.score).toBeGreaterThan(0.1);
-    expect(inference.evidence).toHaveLength(3);
+    expect(inference.evidence.some((item) => item.includes('evidencia directa'))).toBe(true);
+    expect(inference.confidence).toBeGreaterThan(0.4);
   });
 
   it('mantiene poca confianza cuando solo existe evidencia acústica', () => {
-    const inference = inferProfiles([], analysisFixture({ crestDb: 14 }));
-    const topScore = inference.affinities[0]?.score ?? 0;
-
+    const inference = inferProfiles(emptyTags(), analysisFixture({ crestDb: 14 }));
     expect(inference.affinities[0]?.profileId).toBe('classical');
-    expect(topScore).toBeLessThan(0.5);
+    expect(inference.confidence).toBeLessThan(0.5);
   });
 });
 
-describe('recipe building', () => {
-  it('Flat es un bypass estricto aunque se soliciten adaptaciones', () => {
-    const inference = inferProfiles(['rock'], analysisFixture());
+describe('intervention recipes', () => {
+  it('Sin EQ es un bypass estricto', () => {
     const recipe = buildRecipe({
-      selection: 'flat',
-      inference,
+      selection: 'off',
+      inference: inferProfiles({ ...emptyTags(), track: ['rock'] }, analysisFixture()),
       analysis: analysisFixture(),
-      intensityPercent: 100,
-      adaptationEnabled: true,
-      dynamicEnabled: true,
     });
 
+    expect(recipe.schemaVersion).toBe(2);
     expect(recipe.bypass).toBe(true);
     expect(recipe.preampDb).toBe(0);
     expect(recipe.dynamicRules).toEqual([]);
     expect(recipe.bands.every((band) => band.gainDb === 0)).toBe(true);
   });
 
-  it('reserva headroom cuando un perfil introduce ganancias', () => {
-    const inference = inferProfiles(['rock'], null);
-    const recipe = buildRecipe({
-      selection: 'rock',
-      inference,
-      analysis: null,
-      intensityPercent: 60,
-      adaptationEnabled: false,
-      dynamicEnabled: true,
-    });
+  it('escala la misma receta semántica por nivel y conserva límites', () => {
+    const analysis = analysisFixture();
+    const inference = inferProfiles({ ...emptyTags(), track: ['rock'] }, analysis);
+    const gentle = buildRecipe({ selection: 'gentle', inference, analysis });
+    const balanced = buildRecipe({ selection: 'balanced', inference, analysis });
+    const intense = buildRecipe({ selection: 'intense', inference, analysis });
 
-    expect(recipe.bypass).toBe(false);
-    expect(recipe.preampDb).toBeLessThan(0);
-    expect(recipe.dynamicRules).toHaveLength(3);
-    expect(recipe.bands.some((band) => band.gainDb > 0)).toBe(true);
+    expect(gentle.bypass).toBe(false);
+    expect(gentle.dynamicRules).toHaveLength(3);
+    expect(maxAbs(gentle)).toBeLessThan(maxAbs(balanced));
+    expect(maxAbs(balanced)).toBeLessThan(maxAbs(intense));
+    expect(maxAbs(intense)).toBeLessThanOrEqual(3.75);
+    expect(recipeDistance(gentle, balanced)).toBeGreaterThan(0.25);
   });
 
   it('la prueba de cableado es extrema, fija y libre de adaptación', () => {
-    const inference = inferProfiles(['rock'], analysisFixture());
+    const analysis = analysisFixture();
     const recipe = buildRecipe({
       selection: 'diagnostic',
-      inference,
-      analysis: analysisFixture(),
-      intensityPercent: 10,
-      adaptationEnabled: true,
-      dynamicEnabled: true,
+      inference: inferProfiles({ ...emptyTags(), track: ['rock'] }, analysis),
+      analysis,
     });
 
     expect(recipe.resolvedLabel).toBe('Prueba de cableado');
     expect(recipe.preampDb).toBe(-9);
     expect(recipe.adaptationEnabled).toBe(false);
     expect(recipe.dynamicEnabled).toBe(false);
-    expect(Math.max(...recipe.bands.map((band) => Math.abs(band.gainDb)))).toBeGreaterThanOrEqual(12);
+    expect(maxAbs(recipe)).toBeGreaterThanOrEqual(12);
   });
 
   it('la adaptación solo reduce una resonancia medida', () => {
@@ -88,12 +83,9 @@ describe('recipe building', () => {
       ],
     });
     const recipe = buildRecipe({
-      selection: 'rock',
-      inference: inferProfiles(['rock'], analysis),
+      selection: 'balanced',
+      inference: inferProfiles({ ...emptyTags(), track: ['rock'] }, analysis),
       analysis,
-      intensityPercent: 100,
-      adaptationEnabled: true,
-      dynamicEnabled: false,
     });
 
     const adapted = recipe.bands.find((band) => band.frequency === 250);
@@ -101,6 +93,14 @@ describe('recipe building', () => {
     expect(recipe.bands.every((band) => band.adaptationDb <= 0)).toBe(true);
   });
 });
+
+function maxAbs(recipe: ReturnType<typeof buildRecipe>): number {
+  return Math.max(...recipe.bands.map((band) => Math.abs(band.gainDb)));
+}
+
+function emptyTags(): ScopedTags {
+  return { track: [], album: [], artist: [] };
+}
 
 function analysisFixture(overrides: Partial<TrackAnalysis> = {}): TrackAnalysis {
   return {
@@ -124,6 +124,7 @@ function analysisFixture(overrides: Partial<TrackAnalysis> = {}): TrackAnalysis 
       { frequency: 8000, db: -30, relativeDb: 0 },
       { frequency: 12000, db: -30, relativeDb: 0 },
     ],
+    auditionSegments: [{ id: 'representative', label: 'Representativo', startSeconds: 0, durationSeconds: 18, rmsDbfs: -12 }],
     ...overrides,
   };
 }

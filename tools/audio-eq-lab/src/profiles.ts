@@ -2,15 +2,67 @@ import {
   EQ_FREQUENCIES,
   type AudioRecipe,
   type DynamicRule,
+  type InterventionLevel,
   type ProfileAffinity,
-  type ProfileDefinition,
-  type ProfileId,
   type ProfileInference,
-  type ProfileSelection,
+  type RecipeSelection,
+  type ScopedTags,
+  type StyleProfileDefinition,
+  type StyleProfileId,
+  type TagScope,
   type TrackAnalysis,
 } from './model';
 
-export const ENGINE_VERSION = 'hirmos-audio-lab/0.1.0';
+export const ENGINE_VERSION = 'hirmos-audio-lab/0.2.0';
+
+interface InterventionDefinition {
+  label: string;
+  description: string;
+  styleScale: number;
+  adaptationScale: number;
+  dynamicScale: number;
+  maxBoostDb: number;
+  maxCutDb: number;
+}
+
+export const INTERVENTIONS: Record<InterventionLevel, InterventionDefinition> = {
+  off: {
+    label: 'Sin EQ',
+    description: 'Ruta original, sin procesamiento de contenido.',
+    styleScale: 0,
+    adaptationScale: 0,
+    dynamicScale: 0,
+    maxBoostDb: 0,
+    maxCutDb: 0,
+  },
+  gentle: {
+    label: 'Suave',
+    description: 'Correcciones pequeñas y de alta confianza.',
+    styleScale: 0.55,
+    adaptationScale: 0.55,
+    dynamicScale: 0.5,
+    maxBoostDb: 1.25,
+    maxCutDb: 1.5,
+  },
+  balanced: {
+    label: 'Equilibrada',
+    description: 'Compromiso recomendado entre contexto y medición.',
+    styleScale: 1,
+    adaptationScale: 1,
+    dynamicScale: 1,
+    maxBoostDb: 2.25,
+    maxCutDb: 3,
+  },
+  intense: {
+    label: 'Intensa',
+    description: 'Transformación claramente audible, siempre acotada.',
+    styleScale: 1.55,
+    adaptationScale: 1.5,
+    dynamicScale: 1.35,
+    maxBoostDb: 3.75,
+    maxCutDb: 4.5,
+  },
+};
 
 const sharedDynamicRules: readonly DynamicRule[] = [
   {
@@ -45,21 +97,14 @@ const sharedDynamicRules: readonly DynamicRule[] = [
   },
 ];
 
-export const PROFILES: Record<ProfileId, ProfileDefinition> = {
-  flat: {
-    id: 'flat',
-    label: 'Flat',
-    description: 'Ruta seca sin ecualización ni adaptación.',
-    gainsDb: [0, 0, 0, 0, 0],
-    tags: [],
-    dynamicRules: [],
-  },
+// Estas familias son componentes internos de una receta. No son presets que el oyente elige.
+export const STYLE_PROFILES: Record<StyleProfileId, StyleProfileDefinition> = {
   rock: {
     id: 'rock',
     label: 'Rock',
     description: 'Grave firme, medios presentes y ataque moderado.',
     gainsDb: [1.2, -0.35, 0.7, 1.1, 0.45],
-    tags: ['rock', 'hard rock', 'alternative rock', 'grunge', 'metal', 'punk', 'progressive rock'],
+    tags: ['rock', 'hard rock', 'alternative rock', 'grunge', 'metal', 'punk', 'progressive rock', 'progressive metal'],
     dynamicRules: sharedDynamicRules,
   },
   pop: {
@@ -99,32 +144,26 @@ export const PROFILES: Record<ProfileId, ProfileDefinition> = {
   },
 };
 
-const selectableProfiles = ['rock', 'pop', 'electronic', 'acoustic', 'classical'] as const;
+const selectableProfiles = Object.keys(STYLE_PROFILES) as StyleProfileId[];
+const scopeWeights: Record<TagScope, number> = { track: 4, album: 2, artist: 0.8 };
+const scopeLabels: Record<TagScope, string> = { track: 'pista', album: 'álbum', artist: 'artista' };
 
-export function inferProfiles(tags: readonly string[], analysis: TrackAnalysis | null): ProfileInference {
-  const scores = new Map<ProfileAffinity['profileId'], number>(
-    selectableProfiles.map((profileId) => [profileId, 0.35]),
-  );
+export function inferProfiles(tags: ScopedTags, analysis: TrackAnalysis | null): ProfileInference {
+  const scores = new Map<StyleProfileId, number>(selectableProfiles.map((profileId) => [profileId, 0.35]));
   const evidence: string[] = [];
-  const normalizedTags = tags
-    .map((tag) => normalizeTag(tag))
-    .filter((tag) => tag.length > 0);
+  let semanticMatches = 0;
 
-  for (const tag of normalizedTags) {
-    let matched = false;
-    for (const profileId of selectableProfiles) {
-      const profile = PROFILES[profileId];
-      const bestMatch = profile.tags.some((candidate) => {
+  for (const scope of ['track', 'album', 'artist'] as const) {
+    for (const tag of tags[scope].map(normalizeTag).filter(Boolean)) {
+      const matches = selectableProfiles.filter((profileId) => STYLE_PROFILES[profileId].tags.some((candidate) => {
         const normalizedCandidate = normalizeTag(candidate);
         return tag === normalizedCandidate || tag.includes(normalizedCandidate) || normalizedCandidate.includes(tag);
-      });
-      if (bestMatch) {
-        scores.set(profileId, (scores.get(profileId) ?? 0) + 3);
-        matched = true;
-      }
-    }
-    if (matched) {
-      evidence.push(`La etiqueta “${tag}” aporta afinidad semántica.`);
+      }));
+      if (matches.length === 0) continue;
+      semanticMatches += 1;
+      const contribution = scopeWeights[scope] / matches.length;
+      for (const profileId of matches) addScore(scores, profileId, contribution);
+      evidence.push(`“${tag}” en ${scopeLabels[scope]} orienta ${matches.map((id) => STYLE_PROFILES[id].label).join('/')} (${formatWeight(scopeWeights[scope])}).`);
     }
   }
 
@@ -132,7 +171,7 @@ export function inferProfiles(tags: readonly string[], analysis: TrackAnalysis |
     if (analysis.crestDb >= 13) {
       addScore(scores, 'classical', 0.9);
       addScore(scores, 'acoustic', 0.65);
-      evidence.push(`Crest factor de ${analysis.crestDb.toFixed(1)} dB: favorece perfiles poco invasivos.`);
+      evidence.push(`Crest factor de ${analysis.crestDb.toFixed(1)} dB: favorece una base poco invasiva.`);
     } else if (analysis.crestDb <= 8.5) {
       addScore(scores, 'pop', 0.55);
       addScore(scores, 'electronic', 0.45);
@@ -145,43 +184,41 @@ export function inferProfiles(tags: readonly string[], analysis: TrackAnalysis |
     if (low > 2.5) {
       addScore(scores, 'electronic', 0.7);
       addScore(scores, 'rock', 0.35);
-      evidence.push('La distribución espectral muestra peso relativo en graves.');
+      evidence.push('La medición muestra peso relativo en graves; es evidencia débil, no una etiqueta de género.');
     }
     if (upper > 1.5) {
       addScore(scores, 'pop', 0.45);
       addScore(scores, 'electronic', 0.3);
-      evidence.push('La distribución espectral muestra presencia relativa en agudos.');
+      evidence.push('La medición muestra presencia relativa en agudos; es evidencia débil, no una etiqueta de género.');
     }
   }
 
   if (evidence.length === 0) {
-    evidence.push('Sin evidencia fuerte: las sugerencias acústicas conservan poco peso.');
+    evidence.push('Sin evidencia fuerte: se conserva una receta neutra de baja confianza.');
   }
 
-  const total = [...scores.values()].reduce((sum, score) => sum + score, 0);
+  const total = [...scores.values()].reduce((sum, score) => sum + score, 0) || 1;
   const affinities = selectableProfiles
     .map((profileId) => ({ profileId, score: (scores.get(profileId) ?? 0) / total }))
     .sort((left, right) => right.score - left.score);
+  const margin = (affinities[0]?.score ?? 0) - (affinities[1]?.score ?? 0);
+  const confidence = round(clamp(0.15 + margin * 1.4 + Math.min(0.45, semanticMatches * 0.12), 0.15, 0.95));
 
-  return { affinities, evidence };
+  return { affinities, evidence, confidence };
 }
 
 export function buildRecipe(options: {
-  selection: ProfileSelection;
+  selection: RecipeSelection;
   inference: ProfileInference;
   analysis: TrackAnalysis | null;
-  intensityPercent: number;
-  adaptationEnabled: boolean;
-  dynamicEnabled: boolean;
 }): AudioRecipe {
-  const intensity = clamp(options.intensityPercent / 100, 0, 1);
-  if (options.selection === 'flat') {
+  if (options.selection === 'off') {
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       engineVersion: ENGINE_VERSION,
-      selection: 'flat',
-      resolvedLabel: PROFILES.flat.label,
-      intensity,
+      selection: 'off',
+      resolvedLabel: INTERVENTIONS.off.label,
+      intensity: 0,
       bypass: true,
       adaptationEnabled: false,
       dynamicEnabled: false,
@@ -189,14 +226,14 @@ export function buildRecipe(options: {
       bands: EQ_FREQUENCIES.map((frequency) => ({ frequency, baseGainDb: 0, adaptationDb: 0, gainDb: 0 })),
       dynamicRules: [],
       affinities: options.inference.affinities,
-      evidence: ['Flat: ruta seca, sin ecualización ni procesamiento adaptativo.'],
+      evidence: ['Sin EQ: ruta seca, sin procesamiento de contenido.'],
       analysis: options.analysis,
     };
   }
   if (options.selection === 'diagnostic') {
     const diagnosticGains = [6, -9, -12, 8, -10] as const;
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       engineVersion: ENGINE_VERSION,
       selection: 'diagnostic',
       resolvedLabel: 'Prueba de cableado',
@@ -221,81 +258,89 @@ export function buildRecipe(options: {
     };
   }
 
-  const weights = resolveWeights(options.selection, options.inference.affinities);
+  const intervention = INTERVENTIONS[options.selection];
+  const weights = resolveWeights(options.inference.affinities);
   const bands = EQ_FREQUENCIES.map((frequency, index) => {
     const baseGainDb = [...weights.entries()].reduce(
-      (sum, [profileId, weight]) => sum + (PROFILES[profileId].gainsDb[index] ?? 0) * weight * intensity,
+      (sum, [profileId, weight]) => sum + (STYLE_PROFILES[profileId].gainsDb[index] ?? 0) * weight * intervention.styleScale,
       0,
     );
-    const adaptationDb = options.adaptationEnabled && options.analysis
-      ? calculateResonanceReduction(options.analysis, frequency) * intensity
+    const adaptationDb = options.analysis
+      ? calculateResonanceReduction(options.analysis, frequency) * intervention.adaptationScale
       : 0;
+    const gainDb = clamp(baseGainDb + adaptationDb, -intervention.maxCutDb, intervention.maxBoostDb);
     return {
       frequency,
       baseGainDb: round(baseGainDb),
       adaptationDb: round(adaptationDb),
-      gainDb: round(baseGainDb + adaptationDb),
+      gainDb: round(gainDb),
     };
   });
   const positiveGainBudget = bands.reduce((sum, band) => sum + Math.max(0, band.gainDb), 0);
   const preampDb = positiveGainBudget > 0 ? -round(Math.min(6, positiveGainBudget + 0.5)) : 0;
-  const dynamicRules = options.dynamicEnabled
-    ? blendDynamicRules(weights, intensity)
-    : [];
-  const resolvedLabel = options.selection === 'auto'
-    ? weightsToLabel(weights)
-    : PROFILES[options.selection].label;
+  const dynamicRules = blendDynamicRules(weights, intervention);
+  const dominantStyle = options.inference.affinities[0];
+  const styleLabel = dominantStyle
+    ? `${STYLE_PROFILES[dominantStyle.profileId].label} ${Math.round(dominantStyle.score * 100)} %`
+    : 'sin contexto dominante';
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     engineVersion: ENGINE_VERSION,
     selection: options.selection,
-    resolvedLabel,
-    intensity,
+    resolvedLabel: `${intervention.label} · ${styleLabel}`,
+    intensity: intervention.styleScale,
     bypass: false,
-    adaptationEnabled: options.adaptationEnabled,
-    dynamicEnabled: options.dynamicEnabled,
+    adaptationEnabled: Boolean(options.analysis),
+    dynamicEnabled: true,
     preampDb,
     bands,
     dynamicRules,
     affinities: options.inference.affinities,
-    evidence: options.inference.evidence,
+    evidence: [
+      ...options.inference.evidence,
+      `${intervention.label}: boosts ≤ ${intervention.maxBoostDb.toFixed(2)} dB, cortes ≤ ${intervention.maxCutDb.toFixed(2)} dB.`,
+    ],
     analysis: options.analysis,
   };
 }
 
-function resolveWeights(
-  selection: Exclude<ProfileSelection, 'flat' | 'diagnostic'>,
-  affinities: readonly ProfileAffinity[],
-): Map<Exclude<ProfileId, 'flat'>, number> {
-  if (selection !== 'auto') {
-    return new Map([[selection, 1]]);
-  }
+export function recipeDistance(left: AudioRecipe, right: AudioRecipe): number {
+  const bandDistance = left.bands.reduce(
+    (sum, band, index) => sum + Math.abs(band.gainDb - (right.bands[index]?.gainDb ?? 0)),
+    0,
+  ) / Math.max(1, left.bands.length);
+  const dynamicDistance = left.dynamicRules.reduce(
+    (sum, rule, index) => sum + Math.abs(rule.maxReductionDb - (right.dynamicRules[index]?.maxReductionDb ?? 0)),
+    0,
+  ) / Math.max(1, left.dynamicRules.length || 1);
+  return round(bandDistance + dynamicDistance * 0.35);
+}
+
+function resolveWeights(affinities: readonly ProfileAffinity[]): Map<StyleProfileId, number> {
   const candidates = affinities.slice(0, 3);
   const total = candidates.reduce((sum, affinity) => sum + affinity.score, 0) || 1;
   return new Map(candidates.map((affinity) => [affinity.profileId, affinity.score / total]));
 }
 
 function blendDynamicRules(
-  weights: ReadonlyMap<Exclude<ProfileId, 'flat'>, number>,
-  intensity: number,
+  weights: ReadonlyMap<StyleProfileId, number>,
+  intervention: InterventionDefinition,
 ): DynamicRule[] {
   return sharedDynamicRules.map((baseRule) => {
     const maxReductionDb = [...weights.entries()].reduce((sum, [profileId, weight]) => {
-      const rule = PROFILES[profileId].dynamicRules.find((candidate) => candidate.id === baseRule.id);
+      const rule = STYLE_PROFILES[profileId].dynamicRules.find((candidate) => candidate.id === baseRule.id);
       return sum + (rule?.maxReductionDb ?? 0) * weight;
     }, 0);
     return {
       ...baseRule,
-      maxReductionDb: round(maxReductionDb * intensity),
+      maxReductionDb: round(Math.min(intervention.maxCutDb, maxReductionDb * intervention.dynamicScale)),
     };
   });
 }
 
 function calculateResonanceReduction(analysis: TrackAnalysis, targetFrequency: number): number {
-  if (targetFrequency <= 100 || targetFrequency >= 9000) {
-    return 0;
-  }
+  if (targetFrequency <= 100 || targetFrequency >= 9000) return 0;
   const spectrum = analysis.spectrum;
   const closestIndex = spectrum.reduce((bestIndex, band, index) => {
     const currentDistance = Math.abs(Math.log2(band.frequency / targetFrequency));
@@ -305,19 +350,9 @@ function calculateResonanceReduction(analysis: TrackAnalysis, targetFrequency: n
   const current = spectrum[closestIndex];
   const left = spectrum[Math.max(0, closestIndex - 1)];
   const right = spectrum[Math.min(spectrum.length - 1, closestIndex + 1)];
-  if (!current || !left || !right) {
-    return 0;
-  }
-  const neighbourAverage = (left.relativeDb + right.relativeDb) / 2;
-  const prominence = current.relativeDb - neighbourAverage;
+  if (!current || !left || !right) return 0;
+  const prominence = current.relativeDb - (left.relativeDb + right.relativeDb) / 2;
   return prominence > 3 ? -Math.min(1.5, (prominence - 3) * 0.35) : 0;
-}
-
-function weightsToLabel(weights: ReadonlyMap<Exclude<ProfileId, 'flat'>, number>): string {
-  return [...weights.entries()]
-    .slice(0, 2)
-    .map(([profileId, weight]) => `${PROFILES[profileId].label} ${Math.round(weight * 100)} %`)
-    .join(' · ');
 }
 
 function averageRelativeDb(analysis: TrackAnalysis, frequencies: readonly number[]): number {
@@ -326,19 +361,15 @@ function averageRelativeDb(analysis: TrackAnalysis, frequencies: readonly number
 }
 
 function normalizeTag(value: string): string {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .toLowerCase();
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 }
 
-function addScore(
-  scores: Map<ProfileAffinity['profileId'], number>,
-  profileId: ProfileAffinity['profileId'],
-  amount: number,
-): void {
+function addScore(scores: Map<StyleProfileId, number>, profileId: StyleProfileId, amount: number): void {
   scores.set(profileId, (scores.get(profileId) ?? 0) + amount);
+}
+
+function formatWeight(value: number): string {
+  return value >= 4 ? 'evidencia directa' : value >= 2 ? 'contexto de edición' : 'fallback débil';
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
