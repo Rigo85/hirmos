@@ -125,5 +125,6 @@ uniones dudosas siempre requieren confirmación explícita.
 
 ## Licencia
 
-Todavía no se ha seleccionado una licencia. Hasta que se añada una, no se
-concede una licencia de uso, modificación o redistribución del código.
+Hirmos se distribuye bajo la
+[GNU Affero General Public License v3.0](LICENSE), exclusivamente en su versión
+3 (`AGPL-3.0-only`).
