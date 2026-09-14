@@ -34,6 +34,7 @@ packages/contracts  Contratos compartidos
 packages/domain     Reglas puras del dominio
 database/migrations Migraciones PostgreSQL
 scripts             Utilidades de desarrollo y pruebas
+tools/cue-splitter  Divisor manual y seguro de imágenes FLAC con CUE
 ```
 
 ## Desarrollo local
@@ -70,6 +71,33 @@ npm run test:e2e
 
 Los archivos de este repositorio no incluyen credenciales, inventario de
 infraestructura ni configuración real de producción.
+
+## Imágenes FLAC con CUE
+
+El repositorio incluye una herramienta independiente para materializar una
+imagen FLAC acompañada por `.cue` como pistas FLAC que Navidrome pueda indexar.
+No forma parte del backend ni convierte a Hirmos en servidor de archivos.
+
+El análisis predeterminado no escribe nada:
+
+```bash
+npm run cue:split -- "/music/Artist/Album"
+```
+
+Después de revisar el plan, la creación se solicita explícitamente:
+
+```bash
+npm run cue:split -- --apply "/music/Artist/Album"
+```
+
+La herramienta comprueba si las pistas ya existen, rechaza conjuntos parciales
+o ambiguos, conserva el audio sin pérdida, escribe metadata y portada, y valida
+cada salida antes de publicarla. Nunca elimina ni mueve la imagen o el `.cue`
+originales. Al finalizar crea o actualiza `.ndignore` para que Navidrome excluya
+solamente la imagen original y continúe indexando las pistas separadas.
+
+Las capacidades, límites y procedimiento completo están en
+[`tools/cue-splitter/README.md`](tools/cue-splitter/README.md).
 
 ## Importación de historial
 

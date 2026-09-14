@@ -26,6 +26,8 @@
     "history:import": "node scripts/import-listen-history.mjs",
     "catalog:warm-habits": "node scripts/warm-habits-catalog.mjs",
     "catalog:link-artists": "node scripts/link-artist-identities.mjs",
+    "cue:split": "node tools/cue-splitter/index.mjs",
+    "cue:split:test": "node --test tools/cue-splitter/*.test.mjs",
     "smoke:cache": "node scripts/smoke-cache.mjs",
     "smoke:cache-source": "node scripts/smoke-cache-source.mjs",
     "smoke:auth": "node scripts/smoke-auth-flow.mjs",
