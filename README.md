@@ -93,11 +93,12 @@ Después de revisar el plan, la creación se solicita explícitamente:
 npm run cue:split -- --apply "/music/Artist/Album"
 ```
 
-La herramienta comprueba si las pistas ya existen, rechaza conjuntos parciales
-o ambiguos, conserva el audio sin pérdida, escribe metadata y portada, y valida
-cada salida antes de publicarla. Nunca elimina ni mueve la imagen o el `.cue`
-originales. Al finalizar crea o actualiza `.ndignore` para que Navidrome excluya
-solamente la imagen original y continúe indexando las pistas separadas.
+La herramienta acepta imágenes lossless FLAC o APE, comprueba si las pistas ya
+existen, rechaza conjuntos parciales o ambiguos, produce FLAC, escribe metadata
+y portada, y valida tanto cada salida como la identidad del PCM concatenado
+antes de publicarla. Nunca elimina ni mueve la imagen o el `.cue` originales.
+Al finalizar crea o actualiza `.ndignore` para que Navidrome excluya solamente
+la imagen original y continúe indexando las pistas separadas.
 
 Las capacidades, límites y procedimiento completo están en
 [`tools/cue-splitter/README.md`](tools/cue-splitter/README.md).

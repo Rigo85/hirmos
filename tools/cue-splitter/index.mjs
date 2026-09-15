@@ -27,6 +27,10 @@ const AUDIO_EXTENSIONS = new Set([
 ]);
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png']);
 const COVER_NAMES = ['cover', 'folder', 'front'];
+const LOSSLESS_SOURCE_CODECS = new Map([
+  ['.ape', 'ape'],
+  ['.flac', 'flac'],
+]);
 
 export function cueTimestampToFrames(value) {
   const match = /^(\d+):(\d{2}):(\d{2})$/.exec(value);
@@ -203,7 +207,6 @@ export function buildTrackPlan(cue, sourceProbe) {
     throw new Error('No se pudo determinar la cantidad total de muestras.');
   }
 
-  const extension = path.extname(cue.sourceFile).toLowerCase();
   return cue.tracks.map((track, index) => {
     const startSample = Math.round((track.index01Frames * sampleRate) / 75);
     const next = cue.tracks[index + 1];
@@ -222,9 +225,24 @@ export function buildTrackPlan(cue, sourceProbe) {
       startSample,
       endSample,
       durationSeconds: (endSample - startSample) / sampleRate,
-      outputFile: `${paddedNumber} - ${sanitizeFileName(track.title)}${extension}`,
+      outputFile: `${paddedNumber} - ${sanitizeFileName(track.title)}.flac`,
     };
   });
+}
+
+export function validateLosslessSource(sourceFile, codec) {
+  const extension = path.extname(sourceFile).toLowerCase();
+  const expectedCodec = LOSSLESS_SOURCE_CODECS.get(extension);
+  if (!expectedCodec) {
+    throw new Error(
+      'Solo se admiten imágenes FLAC o APE; no se recodifican fuentes con pérdida.',
+    );
+  }
+  if (codec !== expectedCodec) {
+    throw new Error(
+      `La extensión ${extension} no coincide con el códec ${codec || 'desconocido'}.`,
+    );
+  }
 }
 
 function normalizeTags(tags = {}) {
@@ -430,6 +448,40 @@ function runProcess(command, args) {
   });
 }
 
+async function updateDecodedPcmHash(hash, file, filter) {
+  return new Promise((resolve, reject) => {
+    const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', file];
+    if (filter) args.push('-af', filter);
+    args.push('-map', '0:a:0', '-f', 's32le', '-c:a', 'pcm_s32le', 'pipe:1');
+    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stdout.on('data', (chunk) => hash.update(chunk));
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      stderr = `${stderr}${chunk}`.slice(-16_384);
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve();
+      else {
+        reject(
+          new Error(
+            `ffmpeg no pudo verificar el PCM de ${path.basename(file)}: ${stderr.trim()}`,
+          ),
+        );
+      }
+    });
+  });
+}
+
+async function decodedPcmSha256(files, filter) {
+  const hash = createHash('sha256');
+  for (const [index, file] of files.entries()) {
+    await updateDecodedPcmHash(hash, file, index === 0 ? filter : undefined);
+  }
+  return hash.digest('hex');
+}
+
 function sourceTag(tags, ...names) {
   const normalized = normalizeTags(tags);
   for (const name of names) {
@@ -546,13 +598,8 @@ async function inspectDirectory(directory) {
     throw new Error('FILE debe apuntar a un archivo dentro del directorio del álbum.');
   }
   await fs.access(sourcePath, fsConstants.R_OK);
-  if (path.extname(sourcePath).toLowerCase() !== '.flac') {
-    throw new Error(
-      'La primera versión solo divide fuentes FLAC para garantizar salida sin pérdida.',
-    );
-  }
   const sourceProbe = await probeAudio(sourcePath);
-  if (sourceProbe.codec !== 'flac') throw new Error('La fuente declarada no es FLAC.');
+  validateLosslessSource(sourcePath, sourceProbe.codec);
   const plan = buildTrackPlan(cue, sourceProbe);
   const sourceName = path.basename(sourcePath);
   const candidateEntries = entries.filter((entry) => {
@@ -594,7 +641,7 @@ function printInspection(inspection) {
   console.log(`Álbum: ${cue.album.performer ?? '—'} — ${cue.album.title ?? '—'}`);
   console.log(`Fuente: ${path.basename(sourcePath)}`);
   console.log(
-    `Audio: ${sourceProbe.codec.toUpperCase()}, ${sourceProbe.sampleRate} Hz, ${sourceProbe.bitsPerRawSample ?? '?'} bits, ${sourceProbe.channels} canales`,
+    `Audio: ${sourceProbe.codec.toUpperCase()} → FLAC, ${sourceProbe.sampleRate} Hz, ${sourceProbe.bitsPerRawSample ?? '?'} bits, ${sourceProbe.channels} canales`,
   );
   console.log(`Portada: ${coverPath ? path.basename(coverPath) : 'no encontrada'}`);
   console.log(`Estado previo: ${existing.status}`);
@@ -682,13 +729,27 @@ async function applyPlan(inspection) {
       await validateGeneratedTrack(temporaryPath, track, sourceProbe, Boolean(coverPath));
     }
 
+    console.log('Verificando identidad PCM de la imagen y las pistas…');
+    const sourcePcmHash = await decodedPcmSha256(
+      [sourcePath],
+      `atrim=start_sample=${plan[0].startSample}:end_sample=${plan.at(-1).endSample}`,
+    );
+    const tracksPcmHash = await decodedPcmSha256(
+      generated.map((item) => item.temporaryPath),
+    );
+    if (sourcePcmHash !== tracksPcmHash) {
+      throw new Error(
+        'Las pistas generadas no contienen el mismo PCM que la imagen original.',
+      );
+    }
+
     for (const item of generated) {
       await fs.rename(item.temporaryPath, item.finalPath);
     }
 
     const sourceStat = await fs.stat(sourcePath);
     const manifest = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       createdAt: new Date().toISOString(),
       source: {
         file: path.basename(sourcePath),
@@ -700,10 +761,12 @@ async function applyPlan(inspection) {
         sha256: await sha256(cuePath),
       },
       audio: {
-        codec: sourceProbe.codec,
+        sourceCodec: sourceProbe.codec,
+        outputCodec: 'flac',
         sampleRate: sourceProbe.sampleRate,
         bitsPerRawSample: sourceProbe.bitsPerRawSample,
         channels: sourceProbe.channels,
+        pcmSha256: sourcePcmHash,
       },
       tracks: plan.map((track) => ({
         number: track.number,

@@ -7,6 +7,7 @@ import {
   classifyExistingTracks,
   cueTimestampToFrames,
   parseCue,
+  validateLosslessSource,
 } from './index.mjs';
 
 const SAMPLE = `REM DATE 2013
@@ -46,6 +47,28 @@ test('calcula cortes exactos en muestras y asigna el pregap a la pista anterior'
   assert.equal(plan[0].endSample, cueTimestampToFrames('03:48:67') * 588);
   assert.equal(plan[0].outputFile, '01 - High Wire.flac');
   assert.equal(plan[1].outputFile, '02 - Stand Up And Shout.flac');
+});
+
+test('una imagen APE lossless también produce pistas FLAC', () => {
+  const cue = parseCue(SAMPLE.replace('Coverta.flac', 'Coverta.ape'));
+  const plan = buildTrackPlan(cue, {
+    sampleRate: 44_100,
+    totalSamples: 20_000_000,
+  });
+
+  validateLosslessSource(cue.sourceFile, 'ape');
+  assert.equal(plan[0].outputFile, '01 - High Wire.flac');
+});
+
+test('rechaza formatos con pérdida y extensiones que ocultan otro códec', () => {
+  assert.throws(
+    () => validateLosslessSource('imagen.mp3', 'mp3'),
+    /FLAC o APE/,
+  );
+  assert.throws(
+    () => validateLosslessSource('imagen.ape', 'mp3'),
+    /no coincide/,
+  );
 });
 
 test('reconoce pistas existentes mediante tags aunque el archivo tenga otro nombre', () => {
