@@ -315,6 +315,10 @@ export class TopSongsRepository {
          count(*) FILTER (WHERE state.last_check_outcome = 'empty')::text AS empty,
          count(*) FILTER (WHERE state.next_refresh_at <= now())::text AS stale
        FROM artist_top_songs_state state
+       JOIN catalog_artists artist
+         ON artist.source_id = state.source_id
+        AND artist.remote_artist_id = state.remote_artist_id
+        AND artist.missing_since IS NULL
        WHERE ($1::uuid IS NULL OR state.source_id = $1)`,
       [sourceId ?? null],
     );
