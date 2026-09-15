@@ -52,6 +52,40 @@ describe('manual catalog synchronization route', () => {
     });
     expect(trigger).toHaveBeenCalledTimes(1);
   });
+
+  it('queues a source-scoped top songs revalidation for administrators only', async () => {
+    const topSongsRefresh = {
+      enqueueAll: vi.fn(async () => 84),
+      stats: vi.fn(async () => ({
+        pending: 84, running: 0, completed: 0, failed: 0,
+        artists: 84, useful: 64, empty: 20, stale: 84,
+      })),
+    };
+    app = await buildApp({
+      config: loadConfig({ NODE_ENV: 'test', PUBLIC_ORIGIN: 'http://localhost:4200' }),
+      authService: fakeAuthService(),
+      musicSourceService: {
+        currentForAdmin: vi.fn(async () => configuredSource()),
+      } as unknown as MusicSourceService,
+      topSongsRefresh,
+      logger: false,
+    });
+
+    const forbidden = await app.inject({
+      method: 'POST', url: '/api/admin/music-source/top-songs/revalidate',
+      headers: { cookie: 'hirmos_session=user' }, payload: {},
+    });
+    expect(forbidden.statusCode).toBe(403);
+    expect(topSongsRefresh.enqueueAll).not.toHaveBeenCalled();
+
+    const accepted = await app.inject({
+      method: 'POST', url: '/api/admin/music-source/top-songs/revalidate',
+      headers: { cookie: 'hirmos_session=admin' }, payload: {},
+    });
+    expect(accepted.statusCode).toBe(202);
+    expect(accepted.json()).toMatchObject({ queued: 84, pending: 84, artists: 84, useful: 64 });
+    expect(topSongsRefresh.enqueueAll).toHaveBeenCalledWith(configuredSource().id);
+  });
 });
 
 function fakeAuthService(): AuthService {

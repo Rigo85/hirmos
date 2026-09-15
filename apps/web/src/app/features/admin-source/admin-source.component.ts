@@ -4,6 +4,7 @@ import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angula
 import { RouterLink } from '@angular/router';
 import type {
   AdminMusicSource, CatalogSyncStatus, CatalogSyncTriggerResponse,
+  TopSongsRefreshStatus, TopSongsRefreshTriggerResponse,
 } from '@hirmos/contracts';
 import { firstValueFrom } from 'rxjs';
 
@@ -16,6 +17,7 @@ export class AdminSourceComponent {
   private readonly http = inject(HttpClient);
   private readonly destroyRef = inject(DestroyRef);
   private pollingSync = false;
+  private pollingTopSongs = false;
   private destroyed = false;
   protected readonly source = signal<AdminMusicSource | null>(null);
   protected readonly working = signal<'probe' | 'save' | null>(null);
@@ -25,6 +27,12 @@ export class AdminSourceComponent {
   });
   protected readonly syncSubmitting = signal(false);
   protected readonly syncMessage = signal<{ kind: 'success' | 'error'; text: string } | null>(null);
+  protected readonly topSongsStatus = signal<TopSongsRefreshStatus>({
+    pending: 0, running: 0, completed: 0, failed: 0,
+    artists: 0, useful: 0, empty: 0, stale: 0,
+  });
+  protected readonly topSongsSubmitting = signal(false);
+  protected readonly topSongsMessage = signal<{ kind: 'success' | 'error'; text: string } | null>(null);
   protected readonly form = new FormGroup({
     name: new FormControl('Biblioteca principal', { nonNullable: true, validators: [Validators.required] }),
     baseUrl: new FormControl('', { nonNullable: true, validators: [Validators.required] }),
@@ -76,6 +84,29 @@ export class AdminSourceComponent {
     return this.source()?.lastSyncedAt ? 'Actualizado' : 'Pendiente';
   }
 
+  protected async revalidateTopSongs(): Promise<void> {
+    if (!this.source() || this.topSongsSubmitting()) return;
+    this.topSongsSubmitting.set(true);
+    this.topSongsMessage.set(null);
+    try {
+      const response = await firstValueFrom(this.http.post<TopSongsRefreshTriggerResponse>(
+        '/api/admin/music-source/top-songs/revalidate', {},
+      ));
+      this.topSongsStatus.set(response);
+      this.topSongsMessage.set({
+        kind: 'success',
+        text: response.queued
+          ? `Se encolaron ${response.queued} artistas. Las listas vigentes permanecen visibles.`
+          : 'Todos los artistas ya estaban en la cola de revalidación.',
+      });
+      void this.pollTopSongsUntilFinished();
+    } catch {
+      this.topSongsMessage.set({ kind: 'error', text: 'No pudimos iniciar la revalidación.' });
+    } finally {
+      this.topSongsSubmitting.set(false);
+    }
+  }
+
   protected formatDate(value: string | null | undefined): string {
     if (!value) return 'Todavía no se ha completado un barrido.';
     return new Intl.DateTimeFormat('es', {
@@ -84,7 +115,7 @@ export class AdminSourceComponent {
   }
 
   private async initialize(): Promise<void> {
-    await Promise.all([this.load(), this.loadSyncStatus()]);
+    await Promise.all([this.load(), this.loadSyncStatus(), this.loadTopSongsStatus()]);
     if (this.syncStatus().status === 'running') void this.pollSyncUntilFinished();
   }
 
@@ -111,6 +142,42 @@ export class AdminSourceComponent {
       this.syncMessage.set({
         kind: 'error', text: 'No pudimos consultar el estado de sincronización.',
       });
+    }
+  }
+
+  private async loadTopSongsStatus(): Promise<void> {
+    try {
+      this.topSongsStatus.set(await firstValueFrom(
+        this.http.get<TopSongsRefreshStatus>('/api/admin/music-source/top-songs'),
+      ));
+    } catch {
+      this.topSongsMessage.set({
+        kind: 'error', text: 'No pudimos consultar el estado de canciones populares.',
+      });
+    }
+  }
+
+  private async pollTopSongsUntilFinished(): Promise<void> {
+    if (this.pollingTopSongs) return;
+    this.pollingTopSongs = true;
+    try {
+      while (!this.destroyed) {
+        await wait(2_000);
+        if (this.destroyed) return;
+        await this.loadTopSongsStatus();
+        const status = this.topSongsStatus();
+        if (status.pending === 0 && status.running === 0) {
+          this.topSongsMessage.set({
+            kind: status.failed ? 'error' : 'success',
+            text: status.failed
+              ? `Revalidación terminada con ${status.failed} reintentos pendientes.`
+              : `Revalidación terminada: ${status.useful} de ${status.artists} artistas conservan una lista útil.`,
+          });
+          return;
+        }
+      }
+    } finally {
+      this.pollingTopSongs = false;
     }
   }
 

@@ -24,6 +24,9 @@ una invitación.
   Navidrome/OpenSubsonic.
 - Streaming con rangos, carátulas, metadatos enriquecidos y letras con proveedor
   público y fallback de la fuente musical.
+- Canciones populares cacheadas como IDs del catálogo, con actualización
+  durable, vacíos no destructivos y revalidación administrativa en segundo
+  plano.
 
 ## Estructura
 

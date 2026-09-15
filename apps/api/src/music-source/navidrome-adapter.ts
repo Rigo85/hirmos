@@ -33,6 +33,7 @@ export interface NavidromeAdapterOptions {
   clientName?: string;
   fetchImplementation?: typeof fetch;
   telemetry?: ThirdPartyTelemetry;
+  supportsTopSongsByArtistId?: boolean;
 }
 
 interface SubsonicEnvelope<T = Record<string, unknown>> {
@@ -70,13 +71,12 @@ export class NavidromeAdapter implements MusicSourceAdapter {
       'playlists',
       'scrobble',
     ];
-    if (
-      extensions?.openSubsonicExtensions?.some(
-        (extension) => extension.name === 'songLyrics',
-      )
-    ) {
+    if (extensions?.openSubsonicExtensions?.some((extension) => extension.name === 'songLyrics')) {
       capabilities.push('structuredLyrics');
     }
+    if (extensions?.openSubsonicExtensions?.some(
+      (extension) => extension.name === 'topSongsByArtistId',
+    )) capabilities.push('topSongsByArtistId');
 
     return {
       serverType: response.type ?? 'opensubsonic',
@@ -245,9 +245,8 @@ export class NavidromeAdapter implements MusicSourceAdapter {
         id: artistId, count: '12', includeNotPresent: 'false',
       }, signal).then((value) => ({ available: true, value }))
         .catch(() => ({ available: false, value: null })),
-      this.call<{ topSongs?: { song?: SourceSong[] } }>(
-        'getTopSongs', { artist: response.artist.name, count: '50' }, signal,
-      ).then((value) => ({ available: true, value }))
+      this.getArtistTopTracks(artistId, response.artist.name, signal)
+        .then((value) => ({ available: true, value }))
         .catch(() => ({ available: false, value: null })),
     ]);
     const info = infoResult.value;
@@ -260,10 +259,27 @@ export class NavidromeAdapter implements MusicSourceAdapter {
       similarArtists: (info?.artistInfo2?.similarArtist ?? [])
         .filter((artist) => Boolean(artist.id && artist.name))
         .map(mapArtist),
-      topTracks: (topSongs?.topSongs?.song ?? []).map(mapSong),
+      topTracks: topSongs ?? [],
       externalInfoAvailable: infoResult.available,
       topTracksAvailable: topSongsResult.available,
     };
+  }
+
+  public async getArtistTopTracks(
+    artistId: string,
+    artistName: string,
+    signal?: AbortSignal,
+  ): Promise<SourceTrack[]> {
+    if (this.options.supportsTopSongsByArtistId) {
+      const response = await this.call<{ topSongs?: { song?: SourceSong[] } }>(
+        'getTopSongs', { id: artistId, count: '50' }, signal,
+      );
+      return (response.topSongs?.song ?? []).map(mapSong);
+    }
+    const response = await this.call<{ topSongs?: { song?: SourceSong[] } }>(
+      'getTopSongs', { artist: artistName, count: '50' }, signal,
+    );
+    return (response.topSongs?.song ?? []).map(mapSong);
   }
 
   public async getStream(trackId: string, range?: string, signal?: AbortSignal): Promise<SourceMedia> {
@@ -362,7 +378,10 @@ export class NavidromeAdapter implements MusicSourceAdapter {
       telemetry: this.options.telemetry,
     });
     if (!httpResponse.ok) {
-      throw new Error(`Music source returned HTTP ${httpResponse.status}`);
+      throw new MusicSourceHttpError(
+        httpResponse.status,
+        parseRetryAfter(httpResponse.headers.get('retry-after')),
+      );
     }
     const envelope = (await httpResponse.json()) as SubsonicEnvelope<T>;
     const response = envelope['subsonic-response'];

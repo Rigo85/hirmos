@@ -40,6 +40,8 @@ import { ImageWarmRepository } from './cache/image-warm-repository.js';
 import { ImageWarmWorker } from './cache/image-warm-worker.js';
 import { MetadataWarmRepository } from './cache/metadata-warm-repository.js';
 import { MetadataWarmWorker } from './cache/metadata-warm-worker.js';
+import { TopSongsRepository } from './cache/top-songs-repository.js';
+import { TopSongsWorker } from './cache/top-songs-worker.js';
 
 const config = loadConfig();
 const thirdPartyTelemetry = new ThirdPartyTelemetry();
@@ -79,6 +81,7 @@ const artistTagService = database
         ? [new LastFmTagProvider(config.LASTFM_API_KEY, fetch, thirdPartyTelemetry)] : [])],
     )
   : undefined;
+const topSongsRepository = database ? new TopSongsRepository(database) : undefined;
 const musicSourceService = database && config.DATA_ENCRYPTION_KEY
   ? new MusicSourceService(
       new MusicSourceRepository(database),
@@ -95,6 +98,7 @@ const musicSourceService = database && config.DATA_ENCRYPTION_KEY
       new FavoriteRepository(database),
       imageCache,
       lyricsObjectCache,
+      topSongsRepository,
     )
   : undefined;
 const playbackService = database
@@ -109,6 +113,7 @@ const app = await buildApp({
   accountService,
   musicSourceService,
   catalogSync,
+  topSongsRefresh: topSongsRepository,
   database: database ?? undefined,
 });
 thirdPartyTelemetry.attachLogger(app.log);
@@ -129,9 +134,16 @@ const imageWarmWorker = database && imageCache && musicSourceService
 const metadataWarmWorker = database && musicSourceService
   ? new MetadataWarmWorker(new MetadataWarmRepository(database), musicSourceService, app.log)
   : null;
-catalogSync?.setAfterSync(async () => {
+const topSongsWorker = topSongsRepository && musicSourceService
+  ? new TopSongsWorker(topSongsRepository, musicSourceService, app.log)
+  : null;
+catalogSync?.setAfterSync(async (result) => {
   await imageWarmWorker?.enqueueNow();
   await metadataWarmWorker?.enqueueNow();
+  if (result.affectedArtistIds.length) {
+    await topSongsRepository?.enqueueAffected(result.sourceId, result.affectedArtistIds);
+  }
+  await topSongsWorker?.enqueueNow();
 });
 const catalogSyncWorker = catalogSync
   ? new CatalogSyncWorker(
@@ -159,6 +171,7 @@ async function shutdown(signal: string): Promise<void> {
   lyricsCacheBackfillWorker?.stop();
   await imageWarmWorker?.stop();
   await metadataWarmWorker?.stop();
+  await topSongsWorker?.stop();
   await app.close();
   await database?.close();
 }
@@ -173,6 +186,7 @@ try {
   lyricsCacheBackfillWorker?.start();
   imageWarmWorker?.start();
   metadataWarmWorker?.start();
+  topSongsWorker?.start();
 } catch (error) {
   app.log.fatal(error, 'Failed to start Hirmos');
   await shutdown('startup-error');

@@ -2,6 +2,47 @@ import { describe, expect, it, vi } from 'vitest';
 import { NavidromeAdapter } from '../src/music-source/navidrome-adapter.js';
 
 describe('NavidromeAdapter', () => {
+  it('loads popular songs through the dedicated OpenSubsonic operation', async () => {
+    let request: URL | null = null;
+    const adapter = new NavidromeAdapter({
+      baseUrl: new URL('https://music.example'), username: 'service', password: 'secret',
+      fetchImplementation: vi.fn(async (input: URL | RequestInfo) => {
+        request = new URL(String(input));
+        return Response.json({ 'subsonic-response': {
+          status: 'ok', version: '1.16.1',
+          topSongs: { song: [{ id: 'song-1', title: 'Popular', artist: 'Artist' }] },
+        } });
+      }) as typeof fetch,
+    });
+
+    await expect(adapter.getArtistTopTracks('artist-id', 'Artist')).resolves.toMatchObject([
+      { id: 'song-1', title: 'Popular' },
+    ]);
+    expect(request!.pathname).toContain('getTopSongs');
+    expect(request!.searchParams.get('artist')).toBe('Artist');
+    expect(request!.searchParams.get('count')).toBe('50');
+  });
+
+  it('prefers the artist ID extension when the source advertises it', async () => {
+    let request: URL | null = null;
+    const adapter = new NavidromeAdapter({
+      baseUrl: new URL('https://music.example'), username: 'service', password: 'secret',
+      supportsTopSongsByArtistId: true,
+      fetchImplementation: vi.fn(async (input: URL | RequestInfo) => {
+        request = new URL(String(input));
+        return Response.json({ 'subsonic-response': {
+          status: 'ok', version: '1.16.1', topSongs: { song: [] },
+        } });
+      }) as typeof fetch,
+    });
+
+    await adapter.getArtistTopTracks('artist-id', 'Ambiguous name');
+
+    expect(request!.pathname).toContain('getTopSongs');
+    expect(request!.searchParams.get('id')).toBe('artist-id');
+    expect(request!.searchParams.has('artist')).toBe(false);
+  });
+
   it('applies the OpenSubsonic lyrics offset using its documented direction', async () => {
     const adapter = new NavidromeAdapter({
       baseUrl: new URL('https://music.example'), username: 'service', password: 'secret',

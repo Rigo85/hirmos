@@ -30,6 +30,30 @@
       </div>
     </article>
 
+    <article class="source-card metadata-refresh-card">
+      <div class="source-card__status">
+        <span class="source-icon" aria-hidden="true">♪</span>
+        <div>
+          <strong>Canciones populares</strong>
+          <small>{{ topSongsStatus().useful }} de {{ topSongsStatus().artists }} artistas con una lista útil</small>
+        </div>
+        <span class="status-badge" [class.status-badge--working]="topSongsStatus().pending + topSongsStatus().running > 0" [class.status-badge--error]="topSongsStatus().failed > 0">
+          {{ topSongsStatus().running ? 'Revalidando' : topSongsStatus().pending ? 'En cola' : topSongsStatus().failed ? 'Con reintentos' : 'Al día' }}
+        </span>
+      </div>
+      <div class="catalog-sync-card__body">
+        <div>
+          <p>Vuelve a consultar la clasificación pública de todos los artistas, por ejemplo después de cambiar los proveedores de Navidrome. Una respuesta vacía nunca elimina la última lista útil.</p>
+          @if (topSongsMessage()) {
+            <p class="catalog-sync-card__feedback" [class.success-message]="topSongsMessage()!.kind === 'success'" [class.form-error]="topSongsMessage()!.kind === 'error'" role="status" aria-live="polite">{{ topSongsMessage()!.text }}</p>
+          }
+        </div>
+        <button class="outline-button" type="button" (click)="revalidateTopSongs()" [disabled]="!source() || topSongsSubmitting()">
+          {{ topSongsSubmitting() ? 'Iniciando…' : 'Revalidar metadatos' }}
+        </button>
+      </div>
+    </article>
+
     <article class="source-card">
       <div class="source-card__status"><span class="source-icon">♫</span><div><strong>{{ source() ? source()!.name : 'Sin fuente configurada' }}</strong><small>{{ source() ? source()!.baseUrl : 'Agrega un servidor compatible con OpenSubsonic.' }}</small></div><span class="status-badge">{{ source()?.healthy ? 'Conectada' : 'Pendiente' }}</span></div>
       <form class="source-form" [formGroup]="form" (ngSubmit)="save()">

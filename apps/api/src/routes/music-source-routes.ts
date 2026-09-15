@@ -13,12 +13,14 @@ import {
 } from '../music-source/music-source-service.js';
 import { ImageCachePendingError } from '../cache/image-cache-service.js';
 import type { CatalogSyncControl } from '../cache/catalog-sync-coordinator.js';
+import type { TopSongsRefreshControl } from '../cache/top-songs-repository.js';
 import { requireAdmin, requireAuthentication } from './auth-routes.js';
 
 export async function registerMusicSourceRoutes(
   app: FastifyInstance,
   service: MusicSourceService | undefined,
   catalogSync?: CatalogSyncControl,
+  topSongsRefresh?: TopSongsRefreshControl,
 ): Promise<void> {
   app.get('/api/admin/music-source', async (request, reply) => {
     const denied = requireAdmin(request, reply);
@@ -117,6 +119,32 @@ export async function registerMusicSourceRoutes(
       });
     }
     return reply.code(202).send({ started: trigger.started, ...catalogSync.status() });
+  });
+
+  app.get('/api/admin/music-source/top-songs', async (request, reply) => {
+    const denied = requireAdmin(request, reply);
+    if (denied) return denied;
+    if (!service || !topSongsRefresh) return notConfigured(request, reply);
+    const source = await service.currentForAdmin();
+    return reply.send(await topSongsRefresh.stats(source?.id));
+  });
+
+  app.post('/api/admin/music-source/top-songs/revalidate', async (request, reply) => {
+    const denied = requireAdmin(request, reply);
+    if (denied) return denied;
+    if (!service || !topSongsRefresh) return notConfigured(request, reply);
+    const source = await service.currentForAdmin();
+    if (!source) {
+      return reply.code(409).send({
+        code: 'MUSIC_SOURCE_NOT_CONFIGURED',
+        message: 'Configura una fuente musical antes de revalidar metadatos.',
+        requestId: request.id,
+      });
+    }
+    const queued = await topSongsRefresh.enqueueAll(source.id);
+    request.log.info({ topSongs: { trigger: 'manual', queued } },
+      'Global top songs revalidation requested');
+    return reply.code(202).send({ queued, ...await topSongsRefresh.stats(source.id) });
   });
 
   app.get('/api/music/search', async (request, reply) => {

@@ -118,6 +118,9 @@ export interface MusicSourceAdapter {
   listAlbumsByYear(year: number, limit: number, offset?: number, signal?: AbortSignal): Promise<SourceAlbum[]>;
   getAlbum(albumId: string, signal?: AbortSignal): Promise<SourceAlbumDetail>;
   getArtist(artistId: string, signal?: AbortSignal): Promise<SourceArtistDetail>;
+  getArtistTopTracks(
+    artistId: string, artistName: string, signal?: AbortSignal,
+  ): Promise<SourceTrack[]>;
   getStream(trackId: string, range?: string, signal?: AbortSignal): Promise<SourceMedia>;
   getCoverArt(coverArtId: string, size?: number, signal?: AbortSignal): Promise<SourceMedia>;
   getLyrics(trackId: string, signal?: AbortSignal): Promise<SourceLyrics[]>;

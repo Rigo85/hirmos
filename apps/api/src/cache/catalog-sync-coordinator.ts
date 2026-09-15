@@ -1,5 +1,5 @@
 import type { CatalogSyncStatus } from '@hirmos/contracts';
-import type { MusicSourceService } from '../music-source/music-source-service.js';
+import type { CatalogSyncResult, MusicSourceService } from '../music-source/music-source-service.js';
 
 export interface CatalogSyncCompletion {
   counts: { artists: number; albums: number; tracks: number };
@@ -18,7 +18,7 @@ export interface CatalogSyncControl {
 
 export class CatalogSyncCoordinator implements CatalogSyncControl {
   private current: Promise<CatalogSyncCompletion> | null = null;
-  private afterSync: (() => Promise<void>) | undefined;
+  private afterSync: ((result: CatalogSyncResult) => Promise<void>) | undefined;
   private currentStatus: CatalogSyncStatus = {
     status: 'idle',
     startedAt: null,
@@ -31,7 +31,7 @@ export class CatalogSyncCoordinator implements CatalogSyncControl {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  public setAfterSync(callback: () => Promise<void>): void {
+  public setAfterSync(callback: (result: CatalogSyncResult) => Promise<void>): void {
     this.afterSync = callback;
   }
 
@@ -64,10 +64,11 @@ export class CatalogSyncCoordinator implements CatalogSyncControl {
 
   private async run(startedAt: string): Promise<CatalogSyncCompletion> {
     try {
-      const counts = await this.service.syncCatalog();
+      const result = await this.service.syncCatalog();
+      const counts = { artists: result.artists, albums: result.albums, tracks: result.tracks };
       let followUpError: unknown | null = null;
       try {
-        await this.afterSync?.();
+        await this.afterSync?.(result);
       } catch (error) {
         followUpError = error;
       }

@@ -16,6 +16,7 @@ import { registerAccountRoutes } from './routes/account-routes.js';
 import { registerHealthRoutes } from './routes/health-routes.js';
 import { registerMusicSourceRoutes } from './routes/music-source-routes.js';
 import type { CatalogSyncControl } from './cache/catalog-sync-coordinator.js';
+import type { TopSongsRefreshControl } from './cache/top-songs-repository.js';
 
 export interface BuildAppOptions {
   config: AppConfig;
@@ -24,6 +25,7 @@ export interface BuildAppOptions {
   accountService?: AccountService;
   musicSourceService?: MusicSourceService;
   catalogSync?: CatalogSyncControl;
+  topSongsRefresh?: TopSongsRefreshControl;
   database?: Database;
   logger?: boolean;
 }
@@ -109,7 +111,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   }
 
   await registerAccountRoutes(app, options.accountService, rateLimiter);
-  await registerMusicSourceRoutes(app, options.musicSourceService, options.catalogSync);
+  await registerMusicSourceRoutes(
+    app, options.musicSourceService, options.catalogSync, options.topSongsRefresh,
+  );
 
   const webBuilt = await registerWebBuildIfAvailable(app);
 

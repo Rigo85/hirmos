@@ -21,8 +21,17 @@ import type { ArtistTagService } from '../metadata/artist-tag-service.js';
 import { trackKey, type FavoriteRepository } from '../favorites/favorite-repository.js';
 import type { ImageCacheService } from '../cache/image-cache-service.js';
 import type { LyricsObjectCache } from '../cache/lyrics-object-cache.js';
+import type { TopSongsRepository, TopSongsOutcome } from '../cache/top-songs-repository.js';
 
 export class MusicSourceUnavailableError extends Error {}
+
+export interface CatalogSyncResult {
+  artists: number;
+  albums: number;
+  tracks: number;
+  sourceId: string;
+  affectedArtistIds: string[];
+}
 
 export class MusicSourceService {
   private readonly artistTagLookups = new Map<string, Promise<Array<{
@@ -42,6 +51,7 @@ export class MusicSourceService {
     private readonly favorites?: FavoriteRepository,
     private readonly imageCache?: ImageCacheService,
     private readonly lyricsObjectCache?: LyricsObjectCache,
+    private readonly topSongs?: TopSongsRepository,
   ) {}
 
   public async currentForAdmin(): Promise<AdminMusicSource | null> {
@@ -49,7 +59,7 @@ export class MusicSourceService {
     return source ? publicSource(source) : null;
   }
 
-  public async syncCatalog(): Promise<{ artists: number; albums: number; tracks: number }> {
+  public async syncCatalog(): Promise<CatalogSyncResult> {
     if (!this.catalog) throw new MusicSourceUnavailableError('Catalog mirror is not configured');
     const source = await this.requireCurrent();
     const adapter = this.adapterFor(source);
@@ -57,9 +67,12 @@ export class MusicSourceService {
     let artistCount = 0;
     let albumCount = 0;
     let trackCount = 0;
+    const affectedArtistIds = new Set<string>();
     try {
       const artists = await adapter.listArtists(AbortSignal.timeout(20_000));
-      await this.catalog.observeArtists(source.id, artists);
+      for (const id of await this.catalog.observeArtists(source.id, artists)) {
+        affectedArtistIds.add(id);
+      }
       artistCount = artists.length;
 
       for (let offset = 0; ; offset += 100) {
@@ -73,16 +86,21 @@ export class MusicSourceService {
 
       for (let offset = 0; ; offset += 100) {
         const tracks = await adapter.listTracks(100, offset, AbortSignal.timeout(20_000));
-        await this.catalog.observeTracks(source.id, tracks);
+        for (const id of await this.catalog.observeTracks(source.id, tracks)) {
+          affectedArtistIds.add(id);
+        }
         trackCount += tracks.length;
         if (tracks.length < 100) break;
       }
 
-      await this.catalog.finishSync({
+      for (const id of await this.catalog.finishSync({
         id: run.id, sourceId: source.id, startedAt: run.startedAt,
         artists: artistCount, albums: albumCount, tracks: trackCount,
-      });
-      return { artists: artistCount, albums: albumCount, tracks: trackCount };
+      })) affectedArtistIds.add(id);
+      return {
+        artists: artistCount, albums: albumCount, tracks: trackCount,
+        sourceId: source.id, affectedArtistIds: [...affectedArtistIds],
+      };
     } catch (error) {
       await this.catalog.failSync(run.id, error instanceof Error ? error.name : 'unknown')
         .catch(() => undefined);
@@ -346,6 +364,11 @@ export class MusicSourceService {
     const localGenres = localArtistGenres(artist)
       .map((name) => ({ name, browsable: true, reference: name }));
     if (this.artistTags) void this.startArtistTagLookup(source.id, artist).catch(() => undefined);
+    const cachedTopTrackIds = await this.topSongs?.currentTrackIds(source.id, remoteId)
+      .catch(() => null) ?? null;
+    const topTracks = cachedTopTrackIds === null
+      ? artist.topTracks
+      : await this.catalog?.tracksByIds(source.id, cachedTopTrackIds).catch(() => []) ?? [];
     return {
       ...publicArtist(source.id, artist),
       albums: artist.albums.map((album) => publicAlbum(source.id, album)),
@@ -354,7 +377,7 @@ export class MusicSourceService {
       externalUrl: artist.externalUrl,
       similarArtists: artist.similarArtists.map((item) => publicArtist(source.id, item)),
       topTracks: await this.personalizeTracks(
-        userId, artist.topTracks.map((track) => publicTrack(source.id, track)),
+        userId, topTracks.map((track) => publicTrack(source.id, track)),
       ),
     };
   }
@@ -365,6 +388,9 @@ export class MusicSourceService {
   ): Promise<import('./music-source-adapter.js').SourceArtistDetail> {
     const artist = await this.adapterFor(source).getArtist(remoteId, AbortSignal.timeout(10_000));
     await this.catalog?.observeArtistDetail(source.id, artist).catch(() => undefined);
+    if (this.topSongs && artist.topTracksAvailable !== false) {
+      await this.persistArtistTopSongs(source.id, remoteId, artist.topTracks).catch(() => undefined);
+    }
     return artist;
   }
 
@@ -431,6 +457,50 @@ export class MusicSourceService {
     }
     const artist = await this.fetchAndCacheArtistDetail(source, remoteId);
     await this.artistTags?.resolve(source.id, artist);
+  }
+
+  public async refreshArtistTopSongs(
+    sourceId: string, remoteArtistId: string,
+  ): Promise<TopSongsOutcome> {
+    if (!this.topSongs) throw new MusicSourceUnavailableError('Top songs cache is not configured');
+    const source = await this.requireCurrent();
+    if (source.id !== sourceId) {
+      throw new MusicSourceUnavailableError('Music source is no longer active');
+    }
+    const artistName = await this.topSongs.artistName(sourceId, remoteArtistId);
+    if (!artistName) throw new MusicSourceUnavailableError('Artist is no longer active');
+    const tracks = await this.adapterFor(source).getArtistTopTracks(
+      remoteArtistId, artistName, AbortSignal.timeout(20_000),
+    );
+    return this.persistArtistTopSongs(sourceId, remoteArtistId, tracks);
+  }
+
+  private async persistArtistTopSongs(
+    sourceId: string, remoteArtistId: string, tracks: SourceTrack[],
+  ): Promise<TopSongsOutcome> {
+    if (!this.topSongs) return tracks.length ? 'nonempty' : 'empty';
+    const requestedIds = [...new Set(tracks.map((track) => track.id).filter(Boolean))].slice(0, 50);
+    const mirrored = this.catalog && requestedIds.length
+      ? await this.catalog.tracksByIds(sourceId, requestedIds)
+      : tracks;
+    const ids = mirrored.map((track) => track.id);
+    if (!ids.length) {
+      await this.topSongs.recordWeakObservation(sourceId, remoteArtistId, 'empty', null);
+      return 'empty';
+    }
+    const hash = createHash('sha256').update(ids.join('\n')).digest('hex');
+    const baseline = await this.topSongs.baseline(sourceId, remoteArtistId);
+    const abruptContraction = baseline.itemCount >= 10
+      && ids.length < Math.ceil(baseline.itemCount * 0.25);
+    const repeatedCandidate = baseline.lastCheckOutcome === 'suspect'
+      && baseline.candidateHash === hash
+      && baseline.consecutiveWeakObservations >= 1;
+    if (abruptContraction && !repeatedCandidate) {
+      await this.topSongs.recordWeakObservation(sourceId, remoteArtistId, 'suspect', hash);
+      return 'suspect';
+    }
+    await this.topSongs.recordNonempty(sourceId, remoteArtistId, ids, hash);
+    return 'nonempty';
   }
 
   public async lyrics(reference: string, userId: string, signal?: AbortSignal) {
@@ -617,6 +687,7 @@ export class MusicSourceService {
       adapterType: source.adapterType,
       baseUrl: new URL(source.baseUrl),
       ...credentials,
+      capabilities: source.capabilities,
     });
   }
 

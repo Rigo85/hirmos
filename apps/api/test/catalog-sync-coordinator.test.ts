@@ -3,7 +3,10 @@ import { CatalogSyncCoordinator } from '../src/cache/catalog-sync-coordinator.js
 
 describe('CatalogSyncCoordinator', () => {
   it('coalesces concurrent triggers and runs follow-up work once', async () => {
-    const pending = deferred<{ artists: number; albums: number; tracks: number }>();
+    const pending = deferred<{
+      artists: number; albums: number; tracks: number;
+      sourceId: string; affectedArtistIds: string[];
+    }>();
     const syncCatalog = vi.fn(() => pending.promise);
     const afterSync = vi.fn(async () => undefined);
     const times = [
@@ -28,10 +31,15 @@ describe('CatalogSyncCoordinator', () => {
       completedAt: null, counts: null,
     });
 
-    pending.resolve({ artists: 82, albums: 590, tracks: 6888 });
+    const result = {
+      artists: 82, albums: 590, tracks: 6888,
+      sourceId: 'source-1', affectedArtistIds: ['artist-1'],
+    };
+    pending.resolve(result);
     await first.completion;
 
     expect(afterSync).toHaveBeenCalledTimes(1);
+    expect(afterSync).toHaveBeenCalledWith(result);
     expect(coordinator.status()).toEqual({
       status: 'succeeded', startedAt: '2026-09-08T10:00:00.000Z',
       completedAt: '2026-09-08T10:00:05.000Z',

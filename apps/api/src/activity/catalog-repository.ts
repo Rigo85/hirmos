@@ -12,12 +12,31 @@ export interface CatalogSearchResult {
 export class CatalogRepository {
   public constructor(private readonly db: Database) {}
 
-  public async observeTracks(sourceId: string, tracks: SourceTrack[]): Promise<void> {
-    if (!tracks.length) return;
-    await this.db.query(
-      `INSERT INTO catalog_tracks
+  public async observeTracks(sourceId: string, tracks: SourceTrack[]): Promise<string[]> {
+    if (!tracks.length) return [];
+    const result = await this.db.query<{ remote_artist_id: string }>(
+      `WITH incoming AS MATERIALIZED (
+         SELECT $1::uuid AS source_id, item
+           FROM jsonb_array_elements($2::jsonb) AS item
+       ), changed AS MATERIALIZED (
+         SELECT existing.remote_artist_id AS old_artist_id,
+                NULLIF(incoming.item->>'artistId', '') AS new_artist_id
+           FROM incoming
+           LEFT JOIN catalog_tracks existing
+             ON existing.source_id = incoming.source_id
+            AND existing.remote_track_id = incoming.item->>'id'
+          WHERE existing.remote_track_id IS NULL
+             OR existing.missing_since IS NOT NULL
+             OR existing.title IS DISTINCT FROM incoming.item->>'title'
+             OR existing.artist_name IS DISTINCT FROM incoming.item->>'artist'
+             OR existing.remote_artist_id IS DISTINCT FROM NULLIF(incoming.item->>'artistId', '')
+             OR existing.musicbrainz_recording_id::text IS DISTINCT FROM
+                NULLIF(incoming.item->>'musicBrainzId', '')
+       ), saved AS (
+       INSERT INTO catalog_tracks
          (source_id, remote_track_id, title, artist_name, remote_artist_id,
           album_name, remote_album_id, duration_ms, cover_art_id, release_year,
+          musicbrainz_recording_id,
           genres, track_number, disc_number, bit_rate, bit_depth, sampling_rate,
           channel_count, bpm, replay_gain, source_created_at)
        SELECT $1, item->>'id', item->>'title', item->>'artist',
@@ -26,6 +45,7 @@ export class CatalogRepository {
               GREATEST(0, COALESCE((item->>'durationMs')::integer, 0)),
               NULLIF(item->>'coverArtId', ''),
               CASE WHEN item->>'year' IS NULL THEN NULL ELSE (item->>'year')::integer END,
+              NULLIF(item->>'musicBrainzId', '')::uuid,
               COALESCE(item->'genres', '[]'::jsonb),
               (item->>'trackNumber')::integer, (item->>'discNumber')::integer,
               (item->>'bitRate')::integer, (item->>'bitDepth')::integer,
@@ -43,6 +63,7 @@ export class CatalogRepository {
          duration_ms = EXCLUDED.duration_ms,
          cover_art_id = EXCLUDED.cover_art_id,
          release_year = EXCLUDED.release_year,
+         musicbrainz_recording_id = EXCLUDED.musicbrainz_recording_id,
          genres = EXCLUDED.genres,
          track_number = EXCLUDED.track_number,
          disc_number = EXCLUDED.disc_number,
@@ -55,9 +76,18 @@ export class CatalogRepository {
          source_created_at = EXCLUDED.source_created_at,
          missing_since = NULL,
          missing_syncs = 0,
-         last_seen_at = now()`,
+         last_seen_at = now()
+       RETURNING remote_track_id
+       )
+       SELECT DISTINCT remote_artist_id
+         FROM (
+           SELECT old_artist_id AS remote_artist_id FROM changed
+           UNION SELECT new_artist_id FROM changed
+         ) affected
+        WHERE remote_artist_id IS NOT NULL`,
       [sourceId, JSON.stringify(tracks)],
     );
+    return result.rows.map((row) => row.remote_artist_id);
   }
 
   public async observeAlbums(sourceId: string, albums: SourceAlbum[]): Promise<void> {
@@ -98,23 +128,45 @@ export class CatalogRepository {
     );
   }
 
-  public async observeArtists(sourceId: string, artists: SourceArtist[]): Promise<void> {
-    if (!artists.length) return;
-    await this.db.query(
-      `INSERT INTO catalog_artists
-         (source_id, remote_artist_id, name, cover_art_id, album_count)
-       SELECT $1, item->>'id', item->>'name', NULLIF(item->>'coverArtId', ''),
-              GREATEST(0, COALESCE((item->>'albumCount')::integer, 0))
-         FROM jsonb_array_elements($2::jsonb) AS item
+  public async observeArtists(sourceId: string, artists: SourceArtist[]): Promise<string[]> {
+    if (!artists.length) return [];
+    const result = await this.db.query<{ remote_artist_id: string }>(
+      `WITH incoming AS MATERIALIZED (
+         SELECT $1::uuid AS source_id, item
+           FROM jsonb_array_elements($2::jsonb) AS item
+       ), changed AS MATERIALIZED (
+         SELECT item->>'id' AS remote_artist_id
+           FROM incoming
+           LEFT JOIN catalog_artists existing
+             ON existing.source_id = incoming.source_id
+            AND existing.remote_artist_id = incoming.item->>'id'
+          WHERE existing.remote_artist_id IS NULL
+             OR existing.missing_since IS NOT NULL
+             OR existing.name IS DISTINCT FROM incoming.item->>'name'
+             OR existing.musicbrainz_artist_id::text IS DISTINCT FROM
+                NULLIF(incoming.item->>'musicBrainzId', '')
+       ), saved AS (
+       INSERT INTO catalog_artists
+         (source_id, remote_artist_id, name, cover_art_id, album_count,
+          musicbrainz_artist_id)
+       SELECT incoming.source_id, item->>'id', item->>'name', NULLIF(item->>'coverArtId', ''),
+              GREATEST(0, COALESCE((item->>'albumCount')::integer, 0)),
+              NULLIF(item->>'musicBrainzId', '')::uuid
+         FROM incoming
        ON CONFLICT (source_id, remote_artist_id) DO UPDATE SET
          name = EXCLUDED.name,
          cover_art_id = EXCLUDED.cover_art_id,
          album_count = EXCLUDED.album_count,
+         musicbrainz_artist_id = EXCLUDED.musicbrainz_artist_id,
          missing_since = NULL,
          missing_syncs = 0,
-         last_seen_at = now()`,
+         last_seen_at = now()
+       RETURNING remote_artist_id
+       )
+       SELECT remote_artist_id FROM changed`,
       [sourceId, JSON.stringify(artists)],
     );
+    return result.rows.map((row) => row.remote_artist_id);
   }
 
   public async observeArtistDetail(sourceId: string, artist: SourceArtistDetail): Promise<void> {
@@ -135,7 +187,7 @@ export class CatalogRepository {
                 THEN $5::jsonb ELSE similar_artists END,
               top_tracks = CASE WHEN $8::boolean AND jsonb_array_length($6::jsonb) > 0
                 THEN $6::jsonb ELSE top_tracks END,
-              detail_fetched_at = CASE WHEN $7::boolean AND $8::boolean
+              detail_fetched_at = CASE WHEN $7::boolean
                 THEN now() ELSE detail_fetched_at END,
               last_seen_at = now(),
               missing_since = NULL
@@ -423,9 +475,14 @@ export class CatalogRepository {
     artists: number;
     albums: number;
     tracks: number;
-  }): Promise<void> {
-    await this.db.query(
-      `WITH missing_tracks AS (
+  }): Promise<string[]> {
+    const result = await this.db.query<{ remote_artist_id: string }>(
+      `WITH newly_missing_tracks AS MATERIALIZED (
+         SELECT remote_artist_id
+           FROM catalog_tracks
+          WHERE source_id = $2 AND last_seen_at < $3
+            AND missing_since IS NULL AND missing_syncs + 1 >= 2
+       ), missing_tracks AS (
          UPDATE catalog_tracks
             SET missing_syncs = missing_syncs + 1,
                 missing_since = CASE WHEN missing_syncs + 1 >= 2
@@ -445,13 +502,18 @@ export class CatalogRepository {
           WHERE source_id = $2 AND last_seen_at < $3
        ), source_updated AS (
          UPDATE music_sources SET last_synced_at = now() WHERE id = $2
-       )
+       ), completed_run AS (
        UPDATE catalog_sync_runs
           SET status = 'succeeded', completed_at = now(), artist_count = $4,
               album_count = $5, track_count = $6, error_code = NULL
-        WHERE id = $1`,
+        WHERE id = $1
+       )
+       SELECT DISTINCT remote_artist_id
+         FROM newly_missing_tracks
+        WHERE remote_artist_id IS NOT NULL`,
       [input.id, input.sourceId, input.startedAt, input.artists, input.albums, input.tracks],
     );
+    return result.rows.map((row) => row.remote_artist_id);
   }
 
   public async failSync(id: number, errorCode: string): Promise<void> {

@@ -70,6 +70,7 @@ export const sourceCapabilitySchema = z.enum([
   'transcode',
   'playlists',
   'scrobble',
+  'topSongsByArtistId',
 ]);
 export type SourceCapability = z.infer<typeof sourceCapabilitySchema>;
 
@@ -118,6 +119,23 @@ export const catalogSyncTriggerResponseSchema = catalogSyncStatusSchema.extend({
   started: z.boolean(),
 });
 export type CatalogSyncTriggerResponse = z.infer<typeof catalogSyncTriggerResponseSchema>;
+
+export const topSongsRefreshStatusSchema = z.object({
+  pending: z.number().int().nonnegative(),
+  running: z.number().int().nonnegative(),
+  completed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  artists: z.number().int().nonnegative(),
+  useful: z.number().int().nonnegative(),
+  empty: z.number().int().nonnegative(),
+  stale: z.number().int().nonnegative(),
+});
+export type TopSongsRefreshStatus = z.infer<typeof topSongsRefreshStatusSchema>;
+
+export const topSongsRefreshTriggerResponseSchema = topSongsRefreshStatusSchema.extend({
+  queued: z.number().int().nonnegative(),
+});
+export type TopSongsRefreshTriggerResponse = z.infer<typeof topSongsRefreshTriggerResponseSchema>;
 
 export const trackSchema = z.object({
   id: z.string(),
