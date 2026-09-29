@@ -37,7 +37,7 @@ packages/contracts  Contratos compartidos
 packages/domain     Reglas puras del dominio
 database/migrations Migraciones PostgreSQL
 scripts             Utilidades de desarrollo y pruebas
-tools/cue-splitter  Divisor manual y seguro de imágenes FLAC con CUE
+tools/cue-splitter  Divisor manual y seguro de imágenes FLAC/APE con CUE
 ```
 
 ## Desarrollo local
@@ -75,10 +75,10 @@ npm run test:e2e
 Los archivos de este repositorio no incluyen credenciales, inventario de
 infraestructura ni configuración real de producción.
 
-## Imágenes FLAC con CUE
+## Imágenes lossless con CUE
 
 El repositorio incluye una herramienta independiente para materializar una
-imagen FLAC acompañada por `.cue` como pistas FLAC que Navidrome pueda indexar.
+imagen FLAC o APE acompañada por `.cue` como pistas FLAC que Navidrome pueda indexar.
 No forma parte del backend ni convierte a Hirmos en servidor de archivos.
 
 El análisis predeterminado no escribe nada:
@@ -97,6 +97,13 @@ La herramienta acepta imágenes lossless FLAC o APE, comprueba si las pistas ya
 existen, rechaza conjuntos parciales o ambiguos, produce FLAC, escribe metadata
 y portada, y valida tanto cada salida como la identidad del PCM concatenado
 antes de publicarla. Nunca elimina ni mueve la imagen o el `.cue` originales.
+La generación y las validaciones ocurren primero en almacenamiento temporal
+local; después copia cada resultado a un nombre oculto, verifica su SHA-256 y
+lo publica. Esto permite usar destinos SMB/GVFS que no ofrecen las operaciones
+de reescritura que el muxer FLAC necesita al cerrar un archivo. Conserva el
+audio anterior al primer `INDEX 01`, admite portadas incrustadas e ISRC/disco,
+y publica sin reemplazar destinos existentes. Usa un bloqueo por carpeta y
+diario para recuperación explícita con `--recover` tras una interrupción.
 Al finalizar crea o actualiza `.ndignore` para que Navidrome excluya solamente
 la imagen original y continúe indexando las pistas separadas.
 

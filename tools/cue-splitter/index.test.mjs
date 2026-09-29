@@ -1,14 +1,38 @@
 import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
   buildTrackPlan,
   buildSourceIgnoreUpdate,
   classifyExistingTracks,
+  copyFileSequentiallyVerified,
   cueTimestampToFrames,
   parseCue,
+  validateCueMetadata,
   validateLosslessSource,
 } from './index.mjs';
+
+test('publica una copia secuencial verificada sin reemplazar destinos', async (t) => {
+  const directory = await fs.mkdtemp(path.join(tmpdir(), 'hirmos-copy-test-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const source = path.join(directory, 'source.flac');
+  const destination = path.join(directory, '.destination.upload');
+  const content = Buffer.alloc(256 * 1024, 0x5a);
+  await fs.writeFile(source, content);
+
+  const hash = await copyFileSequentiallyVerified(source, destination);
+
+  assert.equal((await fs.readFile(destination)).compare(content), 0);
+  assert.match(hash, /^[a-f0-9]{64}$/);
+  await assert.rejects(
+    copyFileSequentiallyVerified(source, destination),
+    /EEXIST/,
+  );
+  await assert.doesNotReject(fs.access(destination));
+});
 
 const SAMPLE = `REM DATE 2013
 PERFORMER "Adrenaline Mob"
@@ -34,6 +58,26 @@ test('interpreta metadatos e índices de un CUE de imagen única', () => {
   assert.equal(cue.tracks[1].title, 'Stand Up And Shout');
   assert.equal(cue.tracks[1].index00Frames, cueTimestampToFrames('03:48:60'));
   assert.equal(cue.tracks[1].index01Frames, cueTimestampToFrames('03:48:67'));
+});
+
+test('rechaza un encabezado CUE con artista y álbum aparentemente invertidos', () => {
+  const cue = parseCue(
+    SAMPLE.replace('PERFORMER "Adrenaline Mob"\nTITLE "Coverta"',
+      'PERFORMER "Coverta"\nTITLE "Adrenaline Mob"')
+      .replace('TITLE "Stand Up And Shout"', 'TITLE "Stand Up And Shout"\n    PERFORMER "Adrenaline Mob"'),
+  );
+
+  assert.throws(() => validateCueMetadata(cue), /TITLE y PERFORMER intercambiados/);
+});
+
+test('no confunde un álbum homónimo o recopilatorio con una inversión', () => {
+  const cue = parseCue(SAMPLE);
+  assert.doesNotThrow(() => validateCueMetadata(cue));
+  cue.album.title = cue.album.performer;
+  assert.doesNotThrow(() => validateCueMetadata(cue));
+  cue.album.performer = 'Various Artists';
+  cue.tracks[1].performer = 'Another Artist';
+  assert.doesNotThrow(() => validateCueMetadata(cue));
 });
 
 test('calcula cortes exactos en muestras y asigna el pregap a la pista anterior', () => {
@@ -145,13 +189,13 @@ test('crea una regla exacta para ocultar solamente la imagen original', () => {
   assert.equal(update.status, 'missing');
   assert.equal(update.changed, true);
   assert.match(update.addition, /^# Hirmos CUE splitter:/);
-  assert.equal(update.rule, '/Album \\[Disc 1\\]\\?.flac');
+  assert.equal(update.rule, 'Album \\[Disc 1\\]?.flac');
   assert.ok(update.addition.endsWith(`${update.rule}\n`));
 });
 
 test('agrega la regla sin reemplazar un .ndignore existente y es idempotente', () => {
   const first = buildSourceIgnoreUpdate('/otro.flac\n', 'imagen.flac');
-  assert.equal(first.addition, '# Hirmos CUE splitter: preserve source without indexing it\n/imagen.flac\n');
+  assert.equal(first.addition, '# Hirmos CUE splitter: preserve source without indexing it\nimagen.flac\n');
 
   const second = buildSourceIgnoreUpdate(
     `/otro.flac\n${first.addition}`,
@@ -161,9 +205,47 @@ test('agrega la regla sin reemplazar un .ndignore existente y es idempotente', (
   assert.equal(second.changed, false);
 });
 
+test('migra la regla antigua anclada a la raíz sin tocar las demás', () => {
+  const previous = [
+    '/otro.flac',
+    '# Hirmos CUE splitter: preserve source without indexing it',
+    '/imagen.flac',
+    '',
+  ].join('\n');
+
+  const update = buildSourceIgnoreUpdate(previous, 'imagen.flac');
+
+  assert.equal(update.status, 'legacy');
+  assert.equal(update.changed, true);
+  assert.equal(
+    update.replacement,
+    '/otro.flac\n# Hirmos CUE splitter: preserve source without indexing it\nimagen.flac\n',
+  );
+});
+
 test('no cambia un .ndignore vacío porque excluye el álbum completo', () => {
   const update = buildSourceIgnoreUpdate('', 'imagen.flac');
 
   assert.equal(update.status, 'directory-ignored');
   assert.equal(update.changed, false);
+});
+
+test('un .ndignore con solo comentarios también excluye el álbum completo', () => {
+  assert.equal(buildSourceIgnoreUpdate('  # explanation\n\n', 'imagen.flac').status, 'directory-ignored');
+});
+
+test('conserva una regla anclada del usuario y añade la regla propia', () => {
+  const result = buildSourceIgnoreUpdate('/imagen.flac\n', 'imagen.flac');
+  assert.equal(result.replacement, undefined);
+  assert.ok(result.addition.endsWith('\nimagen.flac\n'));
+});
+
+test('migra reglas antiguas con metacaracteres y conserva CRLF', () => {
+  const result = buildSourceIgnoreUpdate(
+    '# Hirmos CUE splitter: preserve source without indexing it\r\n/Artist (Japan) \\[1\\]\\?.flac\r\n',
+    'Artist (Japan) [1]?.flac',
+  );
+  assert.equal(result.status, 'legacy');
+  assert.equal(result.replacement,
+    '# Hirmos CUE splitter: preserve source without indexing it\r\nArtist \\(Japan\\) \\[1\\]?.flac\r\n');
 });

@@ -7,9 +7,14 @@ import {
   createReadStream,
   promises as fs,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { Publication } from './publication.mjs';
+import { AsyncLocalStorage } from 'node:async_hooks';
+const operation = new AsyncLocalStorage();
+const signal = () => operation.getStore()?.signal;
 
 const execFile = promisify(execFileCallback);
 const AUDIO_EXTENSIONS = new Set([
@@ -45,7 +50,9 @@ export function cueTimestampToFrames(value) {
     throw new Error(`Índice CUE fuera de rango: ${value}`);
   }
 
-  return (minutes * 60 + seconds) * 75 + frames;
+  const total = (minutes * 60 + seconds) * 75 + frames;
+  if (!Number.isSafeInteger(total)) throw new Error('Índice CUE demasiado grande.');
+  return total;
 }
 
 function readCueValue(line, keyword) {
@@ -57,6 +64,7 @@ function readCueValue(line, keyword) {
 }
 
 export function parseCue(text) {
+  if (text.includes('\uFFFD')) throw new Error('El CUE no es UTF-8 válido; convierte su codificación antes de continuar.');
   const album = {
     title: undefined,
     performer: undefined,
@@ -66,10 +74,26 @@ export function parseCue(text) {
   const tracks = [];
   let currentFile;
   let currentTrack;
+  let fileCount = 0;
 
   for (const originalLine of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
     const line = originalLine.trim();
     if (!line) continue;
+
+    const disc = /^REM\s+(DISCNUMBER|DISC|TOTALDISCS|DISCTOTAL)\s+"?(\d+)"?$/i.exec(line);
+    if (disc) {
+      const value = Number(disc[2]);
+      if (value < 1) throw new Error('Número/total de disco inválido.');
+      album[/^(DISCNUMBER|DISC)$/i.test(disc[1]) ? 'discNumber' : 'discTotal'] = value;
+      continue;
+    }
+    if (/^ISRC\s+/i.test(line)) {
+      if (!currentTrack) throw new Error('ISRC fuera de una pista.');
+      const value = readCueValue(line, 'ISRC').toUpperCase();
+      if (!/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(value)) throw new Error('ISRC inválido.');
+      currentTrack.isrc = value;
+      continue;
+    }
 
     if (/^REM\s+DATE\s+/i.test(line)) {
       album.date = readCueValue(line, line.match(/^REM\s+DATE/i)[0]);
@@ -80,6 +104,7 @@ export function parseCue(text) {
       continue;
     }
     if (/^FILE\s+/i.test(line)) {
+      if (++fileCount !== 1) throw new Error('Esta versión admite una única declaración FILE por CUE.');
       const match = /^FILE\s+(?:"([^"]+)"|(\S+))\s+\S+$/i.exec(line);
       if (!match) throw new Error(`Declaración FILE no reconocida: ${line}`);
       currentFile = match[1] ?? match[2];
@@ -88,7 +113,12 @@ export function parseCue(text) {
     if (/^TRACK\s+/i.test(line)) {
       const match = /^TRACK\s+(\d+)\s+(\S+)$/i.exec(line);
       if (!match) throw new Error(`Declaración TRACK no reconocida: ${line}`);
-      if (match[2].toUpperCase() !== 'AUDIO') continue;
+      if (match[2].toUpperCase() !== 'AUDIO') throw new Error('Solo se admiten CUE exclusivamente AUDIO; no pistas de datos.');
+      const number = Number(match[1]);
+      if (!Number.isSafeInteger(number) || number < 1 || number > 99 ||
+          tracks.some(t => t.number === number) || (currentTrack && number <= currentTrack.number)) {
+        throw new Error('Los números TRACK deben ser únicos, ascendentes y estar entre 1 y 99.');
+      }
       if (!currentFile) throw new Error('TRACK apareció antes de FILE.');
       currentTrack = {
         number: Number(match[1]),
@@ -117,8 +147,9 @@ export function parseCue(text) {
       const match = /^INDEX\s+(00|01)\s+(\d+:\d{2}:\d{2})$/i.exec(line);
       if (!match) throw new Error(`Declaración INDEX no reconocida: ${line}`);
       const frames = cueTimestampToFrames(match[2]);
-      if (match[1] === '00') currentTrack.index00Frames = frames;
-      else currentTrack.index01Frames = frames;
+      const key = match[1] === '00' ? 'index00Frames' : 'index01Frames';
+      if (currentTrack[key] !== undefined) throw new Error('INDEX repetido en la misma pista.');
+      currentTrack[key] = frames;
     }
   }
 
@@ -131,6 +162,9 @@ export function parseCue(text) {
     if (!track.title) throw new Error(`La pista ${track.number} no tiene TITLE.`);
     if (track.index01Frames === undefined) {
       throw new Error(`La pista ${track.number} no tiene INDEX 01.`);
+    }
+    if (track.index00Frames !== undefined && track.index00Frames > track.index01Frames) {
+      throw new Error('INDEX 00 no puede estar después de INDEX 01.');
     }
   }
   for (let index = 1; index < tracks.length; index += 1) {
@@ -160,21 +194,62 @@ export function normalizeIdentity(value) {
     .trim();
 }
 
+export function validateCueMetadata(cue) {
+  const performers = new Map();
+  for (const track of cue.tracks) {
+    if (!track.performer) continue;
+    const identity = normalizeIdentity(track.performer);
+    if (identity && !performers.has(identity)) performers.set(identity, track.performer);
+  }
+  if (
+    cue.album.title &&
+    cue.album.performer &&
+    performers.size === 1 &&
+    cue.tracks.length > 1 &&
+    cue.tracks.every((track) => track.performer)
+  ) {
+    const [[trackPerformerIdentity, trackPerformer]] = performers;
+    const albumTitleIdentity = normalizeIdentity(cue.album.title);
+    const albumPerformerIdentity = normalizeIdentity(cue.album.performer);
+    if (
+      albumTitleIdentity === trackPerformerIdentity &&
+      albumPerformerIdentity !== trackPerformerIdentity
+    ) {
+      throw new Error(
+        `El CUE parece tener TITLE y PERFORMER intercambiados: álbum ` +
+          `"${cue.album.title}", artista del álbum "${cue.album.performer}" y ` +
+          `artista de todas las pistas "${trackPerformer}". Corrige el CUE antes de continuar.`,
+      );
+    }
+  }
+}
+
 function escapeIgnoreFileName(fileName) {
-  return fileName.replaceAll('\\', '\\\\').replace(/([*?\[\]])/g, '\\$1');
+  if (path.basename(fileName) !== fileName || fileName.trim() !== fileName || /[\r\n\0]/.test(fileName)) {
+    throw new Error('El nombre de la imagen no permite una regla .ndignore inequívoca.');
+  }
+  // Navidrome's pinned go-gitignore exposes regex punctuation and already
+  // escapes '?'. Check this against the real scanner, not a JS glob library.
+  return fileName.replace(/[\\*\[\]()+{}^$|]/g, '\\$&')
+    .replace(/^([#!])/, '\\$1');
 }
 
 export function buildSourceIgnoreUpdate(existingContent, sourceFile) {
-  const rule = `/${escapeIgnoreFileName(sourceFile)}`;
+  const rule = escapeIgnoreFileName(sourceFile);
+  const legacyRule = `/${sourceFile.replaceAll('\\', '\\\\').replace(/([*?\[\]])/g, '\\$1')}`;
+  const comment = '# Hirmos CUE splitter: preserve source without indexing it';
   if (existingContent === undefined) {
     return {
       status: 'missing',
       changed: true,
-      addition: `# Hirmos CUE splitter: preserve source without indexing it\n${rule}\n`,
+      addition: `${comment}\n${rule}\n`,
       rule,
     };
   }
-  if (existingContent.trim() === '') {
+  if (!existingContent.split(/\r?\n/).some((line) => {
+    const trimmed = line.trim();
+    return trimmed && !trimmed.startsWith('#');
+  })) {
     return {
       status: 'directory-ignored',
       changed: false,
@@ -188,11 +263,24 @@ export function buildSourceIgnoreUpdate(existingContent, sourceFile) {
   if (hasRule) {
     return { status: 'present', changed: false, addition: '', rule };
   }
+  const lines = existingContent.split(/\r?\n/);
+  if (lines.some((line, index) => line === legacyRule && lines[index - 1] === comment)) {
+    const separator = existingContent.includes('\r\n') ? '\r\n' : '\n';
+    return {
+      status: 'legacy',
+      changed: true,
+      addition: '',
+      replacement: lines
+        .map((line, index) => (line === legacyRule && lines[index - 1] === comment ? rule : line))
+        .join(separator),
+      rule,
+    };
+  }
   const separator = existingContent.endsWith('\n') ? '' : '\n';
   return {
     status: 'missing',
     changed: true,
-    addition: `${separator}# Hirmos CUE splitter: preserve source without indexing it\n${rule}\n`,
+    addition: `${separator}${comment}\n${rule}\n`,
     rule,
   };
 }
@@ -208,7 +296,9 @@ export function buildTrackPlan(cue, sourceProbe) {
   }
 
   return cue.tracks.map((track, index) => {
-    const startSample = Math.round((track.index01Frames * sampleRate) / 75);
+    if (Math.round(track.index01Frames * sampleRate / 75) >= totalSamples) throw new Error(`INDEX 01 fuera de la fuente: pista ${track.number}.`);
+    // Preserve HTOA/initial silence rather than silently excluding source samples.
+    const startSample = index === 0 ? 0 : Math.round((track.index01Frames * sampleRate) / 75);
     const next = cue.tracks[index + 1];
     const endSample = next
       ? Math.round((next.index01Frames * sampleRate) / 75)
@@ -259,6 +349,7 @@ function trackNumberFromTags(tags) {
 }
 
 export function classifyExistingTracks(plan, candidates) {
+  if (new Set(plan.map(t => t.number)).size !== plan.length) throw new Error('Números de pista duplicados en el plan.');
   const matches = new Map();
   const conflicts = [];
 
@@ -354,12 +445,12 @@ async function probeAudio(file) {
         '-v',
         'error',
         '-show_entries',
-        'format=duration:format_tags:stream=index,codec_name,codec_type,sample_rate,channels,bits_per_raw_sample,duration_ts,time_base',
+        'format=duration:format_tags:stream=index,codec_name,codec_type,sample_rate,channels,bits_per_raw_sample,duration_ts,time_base:stream_disposition=attached_pic',
         '-of',
         'json',
         file,
       ],
-      { maxBuffer: 4 * 1024 * 1024 },
+      { maxBuffer: 4 * 1024 * 1024, signal: signal() },
     ));
   } catch (error) {
     throw new Error(`ffprobe no pudo leer ${path.basename(file)}: ${error.message}`);
@@ -380,7 +471,8 @@ async function probeAudio(file) {
     totalSamples,
     durationSeconds: Number(parsed.format?.duration),
     tags: parsed.format?.tags ?? {},
-    hasArtwork: parsed.streams?.some((stream) => stream.codec_type === 'video') ?? false,
+    artworkIndex: parsed.streams?.find(stream => stream.codec_type === 'video' && stream.disposition?.attached_pic)?.index,
+    hasArtwork: parsed.streams?.some(stream => stream.codec_type === 'video' && stream.disposition?.attached_pic) ?? false,
   };
 }
 
@@ -394,11 +486,13 @@ async function findCover(entries, directory) {
     );
     if (match) return path.join(directory, match.name);
   }
+  if (images.length === 1) return path.join(directory, images[0].name);
   return undefined;
 }
 
 async function readOptionalText(file) {
   try {
+    if (!(await fs.lstat(file)).isFile()) throw new Error('Se esperaba un archivo regular: ' + path.basename(file));
     return await fs.readFile(file, 'utf8');
   } catch (error) {
     if (error.code === 'ENOENT') return undefined;
@@ -426,7 +520,21 @@ async function ensureSourceIgnored(directory, sourceFile) {
         throw error;
       }
     }
-    await fs.appendFile(ignorePath, update.addition);
+    if (update.replacement !== undefined) {
+      // Append an effective rule, keeping the legacy one as harmless history.
+      // Never replace the user's whole file with a read/rename race.
+      update.addition = `\n# Hirmos CUE splitter: corrected source exclusion\n${update.rule}\n`;
+    }
+    // Open an existing regular file without following a late symlink. Appending
+    // preserves concurrent user additions instead of replacing the whole file.
+    const handle = await fs.open(ignorePath, fsConstants.O_RDWR | fsConstants.O_APPEND | fsConstants.O_NOFOLLOW);
+    try {
+      if (!(await handle.stat()).isFile()) throw new Error('.ndignore no es un archivo regular.');
+      const latest = await handle.readFile('utf8');
+      if (latest !== existingContent) continue;
+      await handle.writeFile(update.addition);
+      await handle.sync();
+    } finally { await handle.close(); }
     return { status: 'updated', changed: true, rule: update.rule, ignorePath };
   }
   throw new Error('No se pudo actualizar .ndignore porque cambió concurrentemente.');
@@ -434,15 +542,17 @@ async function ensureSourceIgnored(directory, sourceFile) {
 
 function runProcess(command, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'], signal: signal() });
     let stderr = '';
+    let abortError;
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk) => {
       stderr = `${stderr}${chunk}`.slice(-16_384);
     });
-    child.on('error', reject);
+    child.on('error', error => { if (error.name === 'AbortError') abortError = error; else reject(error); });
     child.on('close', (code) => {
-      if (code === 0) resolve();
+      if (abortError) reject(abortError);
+      else if (code === 0) resolve();
       else reject(new Error(`${command} terminó con código ${code}: ${stderr.trim()}`));
     });
   });
@@ -453,16 +563,18 @@ async function updateDecodedPcmHash(hash, file, filter) {
     const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', file];
     if (filter) args.push('-af', filter);
     args.push('-map', '0:a:0', '-f', 's32le', '-c:a', 'pcm_s32le', 'pipe:1');
-    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'], signal: signal() });
     let stderr = '';
+    let abortError;
     child.stdout.on('data', (chunk) => hash.update(chunk));
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk) => {
       stderr = `${stderr}${chunk}`.slice(-16_384);
     });
-    child.on('error', reject);
+    child.on('error', error => { if (error.name === 'AbortError') abortError = error; else reject(error); });
     child.on('close', (code) => {
-      if (code === 0) resolve();
+      if (abortError) reject(abortError);
+      else if (code === 0) resolve();
       else {
         reject(
           new Error(
@@ -491,15 +603,21 @@ function sourceTag(tags, ...names) {
 }
 
 function metadataArguments(track, cue, sourceTags, totalTracks) {
+  const sourceDisc = sourceTag(sourceTags, 'DISC', 'DISCNUMBER')?.split('/');
+  const disc = cue.album.discNumber ?? sourceDisc?.[0];
+  const discTotal = cue.album.discTotal ?? sourceTag(sourceTags, 'DISCTOTAL', 'TOTALDISCS') ?? sourceDisc?.[1];
   const metadata = {
     title: track.title,
-    artist: track.artist,
+    artist: track.artist ?? sourceTag(sourceTags, 'ARTIST'),
     album: track.album ?? sourceTag(sourceTags, 'ALBUM'),
     album_artist:
       track.albumArtist ?? sourceTag(sourceTags, 'ALBUMARTIST', 'ALBUM_ARTIST'),
     track: `${track.number}/${totalTracks}`,
     date: cue.album.date ?? sourceTag(sourceTags, 'DATE', 'YEAR'),
     genre: cue.album.genre ?? sourceTag(sourceTags, 'GENRE'),
+    isrc: track.isrc,
+    disc: disc ? `${disc}${discTotal ? `/${discTotal}` : ''}` : undefined,
+    disctotal: discTotal,
   };
   return Object.entries(metadata).flatMap(([key, value]) =>
     value ? ['-metadata', `${key}=${value}`] : [],
@@ -520,7 +638,7 @@ async function createTemporaryTrack({
   args.push(
     '-map',
     '0:a:0',
-    ...(coverPath ? ['-map', '1:v:0'] : []),
+    ...(coverPath ? ['-map', '1:v:0'] : sourceProbe.hasArtwork ? ['-map', `0:${sourceProbe.artworkIndex}`] : []),
     '-map_metadata',
     '-1',
     '-af',
@@ -529,7 +647,7 @@ async function createTemporaryTrack({
     'flac',
     '-compression_level',
     '8',
-    ...(coverPath ? ['-c:v', 'copy', '-disposition:v:0', 'attached_pic'] : []),
+    ...(coverPath || sourceProbe.hasArtwork ? ['-c:v', 'png', '-disposition:v:0', 'attached_pic'] : []),
     ...metadataArguments(track, cue, sourceProbe.tags, cue.tracks.length),
     temporaryPath,
   );
@@ -570,6 +688,7 @@ async function validateGeneratedTrack(file, track, sourceProbe, coverExpected) {
     failures.push('ALBUMARTIST incorrecto');
   }
   if (coverExpected && !probe.hasArtwork) failures.push('portada ausente');
+  if (track.isrc && tags.ISRC !== track.isrc) failures.push('ISRC incorrecto');
   if (failures.length) {
     throw new Error(`${track.outputFile} no superó la validación: ${failures.join(', ')}`);
   }
@@ -579,6 +698,48 @@ async function sha256(file) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(file)) hash.update(chunk);
   return hash.digest('hex');
+}
+
+export async function copyFileSequentiallyVerified(source, destination) {
+  let destinationHandle;
+  let destinationCreated = false;
+  try {
+    destinationHandle = await fs.open(destination, 'wx');
+    destinationCreated = true;
+    for await (const chunk of createReadStream(source)) {
+      let offset = 0;
+      while (offset < chunk.length) {
+        const { bytesWritten } = await destinationHandle.write(
+          chunk,
+          offset,
+          chunk.length - offset,
+          null,
+        );
+        if (bytesWritten === 0) {
+          throw new Error(`No se pudo continuar copiando ${path.basename(source)}.`);
+        }
+        offset += bytesWritten;
+      }
+    }
+    await destinationHandle.close();
+    destinationHandle = undefined;
+    const [sourceHash, destinationHash] = await Promise.all([
+      sha256(source),
+      sha256(destination),
+    ]);
+    if (sourceHash !== destinationHash) {
+      throw new Error(
+        `La copia de ${path.basename(source)} no coincide con el archivo local validado.`,
+      );
+    }
+    return sourceHash;
+  } catch (error) {
+    await destinationHandle?.close().catch(() => undefined);
+    if (destinationCreated) {
+      await fs.rm(destination, { force: true }).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 async function inspectDirectory(directory) {
@@ -593,13 +754,17 @@ async function inspectDirectory(directory) {
   }
   const cuePath = path.join(directory, cueEntries[0].name);
   const cue = parseCue(await fs.readFile(cuePath, 'utf8'));
+  validateCueMetadata(cue);
   const sourcePath = path.resolve(directory, cue.sourceFile);
   if (path.dirname(sourcePath) !== directory) {
     throw new Error('FILE debe apuntar a un archivo dentro del directorio del álbum.');
   }
   await fs.access(sourcePath, fsConstants.R_OK);
+  if (!(await fs.lstat(sourcePath)).isFile()) throw new Error('La fuente debe ser un archivo regular, no un enlace.');
   const sourceProbe = await probeAudio(sourcePath);
   validateLosslessSource(sourcePath, sourceProbe.codec);
+  cue.album.title ??= sourceTag(sourceProbe.tags, 'ALBUM');
+  cue.album.performer ??= sourceTag(sourceProbe.tags, 'ALBUMARTIST', 'ALBUM_ARTIST', 'ARTIST');
   const plan = buildTrackPlan(cue, sourceProbe);
   const sourceName = path.basename(sourcePath);
   const candidateEntries = entries.filter((entry) => {
@@ -617,6 +782,9 @@ async function inspectDirectory(directory) {
   }
   const existing = classifyExistingTracks(plan, candidates);
   const coverPath = await findCover(entries, directory);
+  if (!coverPath && !sourceProbe.hasArtwork && entries.filter(e => e.isFile() && IMAGE_EXTENSIONS.has(path.extname(e.name).toLowerCase())).length > 1) {
+    throw new Error('Hay varias portadas posibles: identifica la elegida como cover.jpg, folder.jpg o front.png.');
+  }
   const ignorePath = path.join(directory, '.ndignore');
   const ignoreUpdate = buildSourceIgnoreUpdate(
     await readOptionalText(ignorePath),
@@ -643,7 +811,8 @@ function printInspection(inspection) {
   console.log(
     `Audio: ${sourceProbe.codec.toUpperCase()} → FLAC, ${sourceProbe.sampleRate} Hz, ${sourceProbe.bitsPerRawSample ?? '?'} bits, ${sourceProbe.channels} canales`,
   );
-  console.log(`Portada: ${coverPath ? path.basename(coverPath) : 'no encontrada'}`);
+  console.log(`Portada: ${coverPath ? path.basename(coverPath) : sourceProbe.hasArtwork ? 'incrustada en la fuente' : 'no encontrada'}`);
+  if (cue.tracks[0].index01Frames > 0) console.log('Audio previo a INDEX 01: se conserva al principio de la primera pista.');
   console.log(`Estado previo: ${existing.status}`);
   console.log(
     `Exclusión de fuente: ${
@@ -675,7 +844,7 @@ function formatDuration(seconds) {
   return `${minutes}:${String(rounded % 60).padStart(2, '0')}`;
 }
 
-async function applyPlan(inspection) {
+async function applyPlan(inspection, publication) {
   const { existing, plan, directory, sourcePath, sourceProbe, cue, cuePath, coverPath } =
     inspection;
   if (inspection.ignoreUpdate.status === 'directory-ignored') {
@@ -684,6 +853,8 @@ async function applyPlan(inspection) {
     );
   }
   if (existing.status === 'complete') {
+    for (const candidate of existing.matches.values()) await publication.witness(candidate.file);
+    await publication.finalize(path.basename(sourcePath));
     const ignore = await ensureSourceIgnored(directory, path.basename(sourcePath));
     console.log('Las pistas ya existen y coinciden; no se regeneró audio.');
     console.log(
@@ -699,8 +870,15 @@ async function applyPlan(inspection) {
     );
   }
 
+  const stagingDirectory = await fs.mkdtemp(
+    path.join(tmpdir(), 'hirmos-cue-split-'),
+  );
   const generated = [];
   try {
+    await publication.trackStaging(stagingDirectory);
+    const initialSourceHash = await sha256(sourcePath);
+    const initialCueHash = await sha256(cuePath);
+    console.log('Preparando y validando las pistas en almacenamiento local temporal…');
     for (const track of plan) {
       const finalPath = path.join(directory, track.outputFile);
       try {
@@ -709,42 +887,37 @@ async function applyPlan(inspection) {
       } catch (error) {
         if (error.code !== 'ENOENT') throw error;
       }
-      const extension = path.extname(track.outputFile);
-      const stem = path.basename(track.outputFile, extension);
-      const temporaryPath = path.join(
-        directory,
-        `.${stem}.hirmos-part-${process.pid}${extension}`,
-      );
-      const generatedItem = { temporaryPath, finalPath, track };
+      const localPath = path.join(stagingDirectory, track.outputFile);
+      const generatedItem = {
+        localPath,
+        finalPath,
+        track,
+      };
       generated.push(generatedItem);
       console.log(`Generando ${track.outputFile}…`);
       await createTemporaryTrack({
         sourcePath,
         coverPath,
-        temporaryPath,
+        temporaryPath: localPath,
         track,
         cue,
         sourceProbe,
       });
-      await validateGeneratedTrack(temporaryPath, track, sourceProbe, Boolean(coverPath));
+      await validateGeneratedTrack(localPath, track, sourceProbe, Boolean(coverPath) || sourceProbe.hasArtwork);
     }
 
     console.log('Verificando identidad PCM de la imagen y las pistas…');
-    const sourcePcmHash = await decodedPcmSha256(
-      [sourcePath],
-      `atrim=start_sample=${plan[0].startSample}:end_sample=${plan.at(-1).endSample}`,
-    );
+    const sourcePcmHash = await decodedPcmSha256([sourcePath]);
     const tracksPcmHash = await decodedPcmSha256(
-      generated.map((item) => item.temporaryPath),
+      generated.map((item) => item.localPath),
     );
     if (sourcePcmHash !== tracksPcmHash) {
       throw new Error(
         'Las pistas generadas no contienen el mismo PCM que la imagen original.',
       );
     }
-
-    for (const item of generated) {
-      await fs.rename(item.temporaryPath, item.finalPath);
+    if (await sha256(sourcePath) !== initialSourceHash || await sha256(cuePath) !== initialCueHash) {
+      throw new Error('La fuente o el CUE cambió durante el procesamiento; no se publica.');
     }
 
     const sourceStat = await fs.stat(sourcePath);
@@ -754,11 +927,11 @@ async function applyPlan(inspection) {
       source: {
         file: path.basename(sourcePath),
         size: sourceStat.size,
-        sha256: await sha256(sourcePath),
+        sha256: initialSourceHash,
       },
       cue: {
         file: path.basename(cuePath),
-        sha256: await sha256(cuePath),
+        sha256: initialCueHash,
       },
       audio: {
         sourceCodec: sourceProbe.codec,
@@ -777,11 +950,23 @@ async function applyPlan(inspection) {
       })),
     };
     const manifestPath = path.join(directory, '.hirmos-cue-split.json');
-    const temporaryManifest = `${manifestPath}.tmp-${process.pid}`;
-    await fs.writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}\n`, {
+    try {
+      await fs.access(manifestPath);
+      throw new Error('.hirmos-cue-split.json apareció durante el procesamiento.');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    const localManifest = path.join(stagingDirectory, 'manifest.json');
+    await fs.writeFile(localManifest, `${JSON.stringify(manifest, null, 2)}\n`, {
       flag: 'wx',
     });
-    await fs.rename(temporaryManifest, manifestPath);
+
+    console.log('Publicando las pistas verificadas en el directorio del álbum…');
+    for (const item of generated) {
+      await publication.publish(item.localPath, item.track.outputFile);
+    }
+    await publication.publish(localManifest, path.basename(manifestPath));
+    await publication.finalize(path.basename(sourcePath));
     const ignore = await ensureSourceIgnored(directory, path.basename(sourcePath));
     console.log('');
     console.log(`División terminada y validada: ${generated.length} pistas.`);
@@ -790,37 +975,64 @@ async function applyPlan(inspection) {
         ? `.ndignore quedó actualizado con ${ignore.rule}.`
         : `.ndignore ya contenía ${ignore.rule}.`,
     );
-  } catch (error) {
-    for (const item of generated) {
-      await fs.rm(item.temporaryPath, { force: true }).catch(() => undefined);
-    }
-    throw error;
+  } finally {
+    await fs.rm(stagingDirectory, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
   }
 }
 
 function parseArguments(argv) {
   const apply = argv.includes('--apply');
+  const recover = argv.includes('--recover');
   const positional = argv.filter((argument) => !argument.startsWith('--'));
-  if (argv.some((argument) => argument.startsWith('--') && argument !== '--apply')) {
-    throw new Error('Opción desconocida. Solo se admite --apply.');
+  if (argv.some((argument) => argument.startsWith('--') && !['--apply', '--recover'].includes(argument)) || (apply && recover)) {
+    throw new Error('Usa --apply o --recover, no ambos.');
   }
   if (positional.length !== 1) {
-    throw new Error('Uso: npm run cue:split -- [--apply] <directorio-del-álbum>');
+    throw new Error('Uso: npm run cue:split -- [--apply | --recover] <directorio-del-álbum>');
   }
-  return { apply, directory: path.resolve(positional[0]) };
+  return { apply, recover, directory: path.resolve(positional[0]) };
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  const { apply, directory } = parseArguments(argv);
-  const inspection = await inspectDirectory(directory);
-  printInspection(inspection);
-  if (!apply) {
+  const args = parseArguments(argv);
+  const directory = await fs.realpath(args.directory);
+  if (args.recover) {
+    console.log('Recuperación:', await Publication.recover(directory, source => ensureSourceIgnored(directory, source)));
+    return;
+  }
+  if (!args.apply) {
+    const inspection = await inspectDirectory(directory);
+    printInspection(inspection);
     console.log('');
     console.log('Análisis solamente. Usa --apply para crear las pistas.');
     return;
   }
-  console.log('');
-  await applyPlan(inspection);
+  const controller = new AbortController();
+  const stop = () => controller.abort(new Error('Operación interrumpida; recuperando archivos propios.'));
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+  let publication;
+  try {
+    publication = await Publication.begin(directory, controller.signal);
+    await operation.run(controller, async () => {
+      const inspection = await inspectDirectory(directory);
+      printInspection(inspection);
+      await applyPlan(inspection, publication);
+    });
+    await publication.finish();
+  } catch (error) {
+    if (publication) {
+      try { await publication.rollback(); }
+      catch (recoveryError) { console.error(`${recoveryError.message} Ejecuta --recover tras revisar la carpeta.`); }
+    }
+    throw error;
+  } finally {
+    await publication?.close();
+    process.removeListener('SIGINT', stop);
+    process.removeListener('SIGTERM', stop);
+  }
 }
 
 const isEntryPoint = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
