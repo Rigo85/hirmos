@@ -31,7 +31,7 @@ export interface HabitEvidence {
 }
 
 export class ActivityRepository {
-  public constructor(private readonly db: Database) {}
+  public constructor(private readonly db: Database, private readonly eventTime?: Date) {}
 
   public async recordEvent(input: {
     userId: string;
@@ -48,10 +48,11 @@ export class ActivityRepository {
     await this.db.query(
       `INSERT INTO listen_events
          (user_id, source_id, remote_track_id, queue_item_id, device_id,
-          event_type, position_ms, listened_ms)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          event_type, position_ms, listened_ms, occurred_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [input.userId, track.sourceId, track.remoteId, input.snapshot.currentQueueItemId,
-       input.deviceId ?? null, input.type, input.snapshot.positionMs, listenedMs],
+       input.deviceId ?? null, input.type, input.snapshot.positionMs, listenedMs,
+       this.eventTime ?? new Date()],
     );
     await this.updateStats(input.userId, track.sourceId, track.remoteId, input.type,
       input.snapshot.positionMs, listenedMs);
@@ -68,10 +69,11 @@ export class ActivityRepository {
     const after = input.after.currentTrackRef
       ? decodeTrackReference(input.after.currentTrackRef)
       : null;
-    if (!before || !after || before.sourceId !== after.sourceId || before.remoteId !== after.remoteId) {
+    if (!before || !after || before.sourceId !== after.sourceId || before.remoteId !== after.remoteId
+      || input.before.playbackInstanceId !== input.after.playbackInstanceId) {
       return;
     }
-    const wallMs = Math.max(0, Date.now() - Date.parse(input.before.positionObservedAt));
+    const wallMs = Math.max(0, (this.eventTime?.getTime() ?? Date.now()) - Date.parse(input.before.positionObservedAt));
     const positionDelta = input.after.positionMs - input.before.positionMs;
     const listenedMs = input.before.status === 'playing'
       ? Math.max(0, Math.min(positionDelta, wallMs + 5_000, 60_000))
@@ -244,45 +246,46 @@ export class ActivityRepository {
          CASE WHEN $4 = 'completed' THEN 1 ELSE 0 END,
          CASE WHEN $4 = 'skipped' THEN 1 ELSE 0 END,
          $6,
-         CASE WHEN $4 = 'started' THEN now() ELSE NULL END,
-         CASE WHEN $4 IN ('started', 'resumed', 'completed') THEN now() ELSE NULL END,
-         $5, now())
+         CASE WHEN $4 = 'started' THEN $7::timestamptz ELSE NULL END,
+         CASE WHEN $4 IN ('started', 'resumed', 'completed') THEN $7::timestamptz ELSE NULL END,
+         $5, $7::timestamptz)
        ON CONFLICT (user_id, source_id, remote_track_id) DO UPDATE SET
          play_starts = user_track_stats.play_starts + EXCLUDED.play_starts,
          qualified_plays = user_track_stats.qualified_plays + EXCLUDED.qualified_plays,
          completions = user_track_stats.completions + EXCLUDED.completions,
          skips = user_track_stats.skips + EXCLUDED.skips,
          listened_ms = user_track_stats.listened_ms + EXCLUDED.listened_ms,
-         first_played_at = COALESCE(user_track_stats.first_played_at, EXCLUDED.first_played_at),
-         last_played_at = COALESCE(EXCLUDED.last_played_at, user_track_stats.last_played_at),
+         first_played_at = LEAST(user_track_stats.first_played_at, EXCLUDED.first_played_at),
+         last_played_at = GREATEST(EXCLUDED.last_played_at, user_track_stats.last_played_at),
          last_position_ms = EXCLUDED.last_position_ms,
-         last_observed_at = now()
+         last_observed_at = $7::timestamptz
        RETURNING 1
        )
        INSERT INTO user_track_daily_stats
          (user_id, source_id, remote_track_id, stat_date, play_starts,
           qualified_plays, completions, skips, listened_ms, first_played_at,
           last_played_at)
-       VALUES ($1, $2, $3, (now() AT TIME ZONE 'UTC')::date,
+       VALUES ($1, $2, $3, ($7::timestamptz AT TIME ZONE 'UTC')::date,
          CASE WHEN $4 = 'started' THEN 1 ELSE 0 END,
          CASE WHEN $4 = 'completed' THEN 1 ELSE 0 END,
          CASE WHEN $4 = 'completed' THEN 1 ELSE 0 END,
          CASE WHEN $4 = 'skipped' THEN 1 ELSE 0 END,
          $6,
-         CASE WHEN $4 = 'started' THEN now() ELSE NULL END,
-         CASE WHEN $4 IN ('started', 'resumed', 'completed') THEN now() ELSE NULL END)
+         CASE WHEN $4 = 'started' THEN $7::timestamptz ELSE NULL END,
+         CASE WHEN $4 IN ('started', 'resumed', 'completed') THEN $7::timestamptz ELSE NULL END)
        ON CONFLICT (user_id, source_id, remote_track_id, stat_date) DO UPDATE SET
          play_starts = user_track_daily_stats.play_starts + EXCLUDED.play_starts,
          qualified_plays = user_track_daily_stats.qualified_plays + EXCLUDED.qualified_plays,
          completions = user_track_daily_stats.completions + EXCLUDED.completions,
          skips = user_track_daily_stats.skips + EXCLUDED.skips,
          listened_ms = user_track_daily_stats.listened_ms + EXCLUDED.listened_ms,
-         first_played_at = COALESCE(user_track_daily_stats.first_played_at,
+         first_played_at = LEAST(user_track_daily_stats.first_played_at,
                                     EXCLUDED.first_played_at),
-         last_played_at = COALESCE(EXCLUDED.last_played_at,
+         last_played_at = GREATEST(EXCLUDED.last_played_at,
                                    user_track_daily_stats.last_played_at),
          estimated = user_track_daily_stats.estimated OR EXCLUDED.estimated`,
-      [userId, sourceId, remoteTrackId, type, Math.max(0, positionMs), listenedMs],
+      [userId, sourceId, remoteTrackId, type, Math.max(0, positionMs), listenedMs,
+       this.eventTime ?? new Date()],
     );
   }
 }

@@ -2,6 +2,10 @@ import type { Server as HttpServer } from 'node:http';
 import type { FastifyBaseLogger } from 'fastify';
 import {
   playbackClientDiagnosticSchema,
+  playbackAnchorSchema,
+  playbackFailureSchema,
+  playbackRenderPhaseSchema,
+  PLAYBACK_PROTOCOL_VERSION,
   type ClientToServerEvents,
   type PlaybackCommandAck,
   type PlaybackCommandResult,
@@ -23,6 +27,7 @@ interface SocketData {
 }
 
 const deviceSchema = z.object({
+  protocolVersion: z.literal(PLAYBACK_PROTOCOL_VERSION),
   deviceId: z.uuid(),
   deviceName: z.string().trim().min(1).max(100),
   deviceType: z.enum(['desktop', 'mobile', 'tablet', 'unknown']).default('unknown'),
@@ -39,20 +44,27 @@ const selectContextSchema = commandBase.extend({
   message: 'selectedIndex must reference a track',
 });
 const updateSchema = commandBase.extend({
+  renderPhase: playbackRenderPhaseSchema.optional(),
+  anchor: playbackAnchorSchema,
   leaseEpoch: z.number().int().nonnegative(),
   status: z.enum(['playing', 'paused', 'stopped']),
   positionMs: z.number().int().nonnegative().max(86_400_000),
 });
 const controlSchema = commandBase.extend({
-  action: z.enum(['play', 'pause', 'next', 'previous', 'seek']),
+  anchor: playbackAnchorSchema,
+  action: z.enum(['play', 'pause', 'next', 'previous', 'seek', 'retry']),
   positionMs: z.number().int().nonnegative().max(86_400_000).optional(),
   reason: z.enum(['user', 'ended']).optional(),
 }).superRefine((value, context) => {
+  if (value.reason === 'ended' && (value.action !== 'next' || value.positionMs === undefined)) {
+    context.addIssue({ code: 'custom', message: 'ended requires next and a final position' });
+  }
   if (value.action === 'seek' && value.positionMs === undefined) {
     context.addIssue({ code: 'custom', message: 'positionMs is required for seek' });
   }
 });
 const queueRemoveSchema = commandBase.extend({ queueItemId: z.uuid() });
+const failureSchema = commandBase.extend({ anchor: playbackAnchorSchema, failure: playbackFailureSchema });
 
 export function createSocketServer(
   httpServer: HttpServer,
@@ -80,6 +92,9 @@ export function createSocketServer(
       if (!authService || !playbackService) return next(new Error('Service unavailable'));
       const token = parseCookie(socket.handshake.headers.cookie, sessionCookieName(config));
       const session = await authService.authenticate(token);
+      if (session && socket.handshake.auth['protocolVersion'] !== PLAYBACK_PROTOCOL_VERSION) {
+        return next(new Error('Playback client update required'));
+      }
       const device = deviceSchema.safeParse(socket.handshake.auth);
       if (!session || !device.success) return next(new Error('Authentication required'));
       const registered = await playbackService.registerDevice({
@@ -136,6 +151,8 @@ export function createSocketServer(
       playbackService!.selectContext({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
     socket.on('playback:update', (command, ack) => void execute('update', updateSchema, command, ack, (value) =>
       playbackService!.update({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
+    socket.on('playback:failure', (command, ack) => void execute('failure', failureSchema, command, ack, (value) =>
+      playbackService!.failure({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
     socket.on('playback:control', (command, ack) => void execute('control', controlSchema, command, ack, (value) =>
       playbackService!.control({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
     socket.on('playback:queue-remove', (command, ack) => void execute('queue-remove', queueRemoveSchema, command, ack, (value) =>
@@ -168,6 +185,12 @@ export function createSocketServer(
       try {
         if (!await ensureSession()) return;
         const result = await action(parsed.data);
+        if (commandName === 'failure' && result.status === 'accepted') {
+          const notice = result.snapshot.failures.at(-1);
+          logger?.warn({ playbackFailure: { code: notice?.code, phase: notice?.phase,
+            elapsedMs: notice?.elapsedMs, outcome: notice?.outcome, commandId: commandIdOf(parsed.data) } },
+            'Playback failure handled');
+        }
         ack?.(result);
         io.to(room).emit('playback:snapshot', result.snapshot);
         const fields = { playbackCommand: {

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createDatabase } from '../apps/api/dist/db/database.js';
-import { ActivityRepository } from '../apps/api/dist/activity/activity-repository.js';
+import { PlaybackActivityProjector } from '../apps/api/dist/playback/playback-activity-projector.js';
 import { PlaybackRepository } from '../apps/api/dist/playback/playback-repository.js';
 import { PlaybackService } from '../apps/api/dist/playback/playback-service.js';
 import { encodeTrackReference } from '../apps/api/dist/music-source/track-reference.js';
@@ -24,7 +24,7 @@ try {
   )).rows[0].id;
   const deviceId = randomUUID();
   const remoteDeviceId = randomUUID();
-  const service = new PlaybackService(new PlaybackRepository(db), new ActivityRepository(db));
+  const service = new PlaybackService(new PlaybackRepository(db));
   await service.registerDevice({ userId, deviceId, name: 'Smoke', type: 'desktop' });
   await service.registerDevice({
     userId, deviceId: remoteDeviceId, name: 'Smoke remote', type: 'mobile',
@@ -51,14 +51,22 @@ try {
       || selectedRemotely.snapshot.leaseEpoch !== selected.snapshot.leaseEpoch) {
     throw new Error('Remote context selection transferred the active lease');
   }
-  const moved = await service.control({
-    userId, deviceId: remoteDeviceId, commandId: randomUUID(),
+  const progressed = await service.update({
+    userId, deviceId, commandId: randomUUID(),
     expectedRevision: selectedRemotely.snapshot.revision,
-    action: 'next', reason: 'ended',
+    anchor: anchor(selectedRemotely.snapshot), leaseEpoch: selectedRemotely.snapshot.leaseEpoch,
+    status: 'playing', positionMs: 500,
+  });
+  const moved = await service.control({
+    userId, deviceId, commandId: randomUUID(),
+    expectedRevision: progressed.snapshot.revision,
+    anchor: anchor(progressed.snapshot), action: 'next', reason: 'ended', positionMs: 1_000,
   });
   if (moved.status !== 'accepted' || moved.snapshot.currentTrackRef !== tracks[2]) {
     throw new Error('Context queue did not advance');
   }
+  const projector = new PlaybackActivityProjector(db, { info() {}, warn() {} });
+  while (await projector.runBatch()) { /* drain durable activity before checking */ }
   const telemetry = await db.query(
     `SELECT
        (SELECT count(*)::int FROM listen_events WHERE user_id = $1) AS events,
@@ -66,7 +74,7 @@ try {
        (SELECT count(*)::int FROM user_track_stats WHERE user_id = $1 AND completions = 1) AS completions`,
     [userId],
   );
-  if (telemetry.rows[0].events !== 4 || telemetry.rows[0].stats !== 2
+  if (telemetry.rows[0].events !== 2 || telemetry.rows[0].stats !== 1
       || telemetry.rows[0].completions !== 1) {
     throw new Error(`Unexpected telemetry: ${JSON.stringify(telemetry.rows[0])}`);
   }
@@ -77,4 +85,9 @@ try {
   if (userId) await db.query('DELETE FROM users WHERE id = $1', [userId]);
   if (sourceId) await db.query('DELETE FROM music_sources WHERE id = $1', [sourceId]);
   await db.close();
+}
+
+function anchor(s) {
+  return { attempt: s.attempt, currentQueueItemId: s.currentQueueItemId,
+    playbackInstanceId: s.playbackInstanceId, leaseEpoch: s.leaseEpoch };
 }

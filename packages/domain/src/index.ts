@@ -4,6 +4,20 @@ export interface PlaybackLease {
   expiresAtMs: number | null;
 }
 
+/** Queue order is authoritative, including an already-shuffled context. */
+export function nextQueueItem<T extends { id: string; trackRef: string }>(
+  queue: readonly T[], currentId: string | null,
+  options: { omitted?: readonly string[]; repeat?: 'off' | 'one' | 'all'; failed?: boolean } = {},
+): T | null {
+  const index = queue.findIndex(item => item.id === currentId);
+  if (index < 0) return null;
+  const omitted = new Set(options.omitted ?? []);
+  if (options.repeat === 'one' && !options.failed && !omitted.has(queue[index]!.trackRef)) return queue[index]!;
+  const candidates = queue.slice(index + 1);
+  if (options.repeat === 'all') candidates.push(...queue.slice(0, index + 1));
+  return candidates.find(item => !omitted.has(item.trackRef)) ?? null;
+}
+
 export function claimPlaybackLease(
   current: PlaybackLease,
   deviceId: string,

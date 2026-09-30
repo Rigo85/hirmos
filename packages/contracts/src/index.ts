@@ -1,4 +1,5 @@
 import { z } from 'zod';
+export { PLAYBACK_PROTOCOL_VERSION } from './playback-protocol.js';
 
 export const userRoleSchema = z.enum(['user', 'admin']);
 export type UserRole = z.infer<typeof userRoleSchema>;
@@ -294,7 +295,15 @@ export const resolveTracksRequestSchema = z.object({
   references: z.array(z.string().min(1).max(2048)).min(1).max(500),
 });
 export type ResolveTracksRequest = z.infer<typeof resolveTracksRequestSchema>;
-export const resolveTracksResponseSchema = z.object({ tracks: z.array(trackSchema) });
+export const musicLookupFailureSchema = z.object({
+  reference: z.string(),
+  code: z.enum(['not_found', 'service_unavailable', 'timeout', 'unknown']),
+  retryAfterMs: z.number().int().nonnegative().optional(),
+});
+export type MusicLookupFailure = z.infer<typeof musicLookupFailureSchema>;
+export const resolveTracksResponseSchema = z.object({
+  tracks: z.array(trackSchema), failures: z.array(musicLookupFailureSchema).optional(),
+});
 export type ResolveTracksResponse = z.infer<typeof resolveTracksResponseSchema>;
 
 export const favoriteTrackRequestSchema = z.object({ favorite: z.boolean() });
@@ -345,6 +354,13 @@ export const lyricsAdjustmentRequestSchema = z.object({
 export type LyricsAdjustmentRequest = z.infer<typeof lyricsAdjustmentRequestSchema>;
 
 export const playbackStatusSchema = z.enum(['paused', 'playing', 'stopped']);
+export const playbackAnchorSchema = z.object({
+  attempt: z.number().int().nonnegative().default(0),
+  currentQueueItemId: z.uuid().nullable(),
+  playbackInstanceId: z.uuid().nullable(),
+  leaseEpoch: z.number().int().nonnegative(),
+});
+export type PlaybackAnchor = z.infer<typeof playbackAnchorSchema>;
 export const playbackQueueItemSchema = z.object({
   id: z.uuid(),
   trackRef: z.string(),
@@ -352,9 +368,36 @@ export const playbackQueueItemSchema = z.object({
   origin: z.string(),
 });
 export type PlaybackQueueItem = z.infer<typeof playbackQueueItemSchema>;
+export const playbackFailureCodeSchema = z.enum([
+  'network', 'timeout', 'decode', 'unsupported', 'not_found', 'unknown',
+  'autoplay', 'authentication', 'service_unavailable', 'offline',
+]);
+export type PlaybackFailureCode = z.infer<typeof playbackFailureCodeSchema>;
+export const playbackRenderPhaseSchema = z.enum(['unknown', 'loading', 'buffering', 'playing', 'paused', 'awaiting_interaction', 'error', 'blocked']);
+export type PlaybackRenderPhase = z.infer<typeof playbackRenderPhaseSchema>;
+export const playbackFailureSchema = z.object({
+  code: playbackFailureCodeSchema,
+  phase: z.enum(['metadata', 'start', 'stream']),
+  positionMs: z.number().int().min(0).max(86_400_000),
+  elapsedMs: z.number().int().min(0).max(120_000),
+  retryAfterMs: z.number().int().min(0).max(86_400_000).optional(),
+});
+export type PlaybackFailure = z.infer<typeof playbackFailureSchema>;
+export const playbackFailureNoticeSchema = playbackFailureSchema.extend({
+  id: z.uuid(), trackRef: z.string(), occurredAt: z.iso.datetime(),
+  outcome: z.enum(['advanced', 'blocked', 'limit', 'end', 'paused']),
+});
+export type PlaybackFailureNotice = z.infer<typeof playbackFailureNoticeSchema>;
 export const playbackSnapshotSchema = z.object({
+  attempt: z.number().int().nonnegative().default(0),
+  renderPhase: playbackRenderPhaseSchema.default('unknown'),
+  failures: z.array(playbackFailureNoticeSchema).default([]),
+  recoveryDeadline: z.iso.datetime().nullable().default(null),
   sessionId: z.uuid(),
   revision: z.number().int().nonnegative(),
+  protocolVersion: z.literal(3),
+  queueRevision: z.number().int().nonnegative(),
+  playbackInstanceId: z.uuid().nullable(),
   status: playbackStatusSchema,
   currentQueueItemId: z.uuid().nullable(),
   currentTrackRef: z.string().nullable(),
@@ -376,11 +419,11 @@ export type PlaybackCommandResult = {
 export type PlaybackCommandAck = (result: PlaybackCommandResult) => void;
 
 export const playbackCommandNameSchema = z.enum([
-  'claim', 'select', 'select-context', 'update', 'control', 'queue-remove',
+  'claim', 'select', 'select-context', 'update', 'control', 'queue-remove', 'failure',
 ]);
 export type PlaybackCommandName = z.infer<typeof playbackCommandNameSchema>;
 export const playbackClientDiagnosticSchema = z.object({
-  kind: z.enum(['disconnect', 'connect_error', 'ack_timeout']),
+  kind: z.enum(['disconnect', 'connect_error', 'ack_timeout', 'audio_permission']),
   occurredAt: z.iso.datetime(),
   reason: z.string().max(200).optional(),
   command: playbackCommandNameSchema.optional(),
@@ -395,6 +438,9 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
+  'playback:failure': (command: {
+    commandId: string; expectedRevision: number; anchor: PlaybackAnchor; failure: PlaybackFailure;
+  }, ack?: PlaybackCommandAck) => void;
   'playback:diagnostic': (diagnostic: PlaybackClientDiagnostic) => void;
   'playback:sync': (command: { lastRevision: number | null }) => void;
   'playback:claim': (
@@ -419,14 +465,17 @@ export interface ClientToServerEvents {
     expectedRevision: number;
     leaseEpoch: number;
     status: z.infer<typeof playbackStatusSchema>;
+    renderPhase?: PlaybackRenderPhase;
     positionMs: number;
+    anchor: PlaybackAnchor;
   }, ack?: PlaybackCommandAck) => void;
   'playback:control': (command: {
     commandId: string;
     expectedRevision: number;
-    action: 'play' | 'pause' | 'next' | 'previous' | 'seek';
+    action: 'play' | 'pause' | 'next' | 'previous' | 'seek' | 'retry';
     positionMs?: number;
     reason?: 'user' | 'ended';
+    anchor: PlaybackAnchor;
   }, ack?: PlaybackCommandAck) => void;
   'playback:queue-remove': (command: {
     commandId: string;

@@ -15,6 +15,8 @@ import { ImageCachePendingError } from '../cache/image-cache-service.js';
 import type { CatalogSyncControl } from '../cache/catalog-sync-coordinator.js';
 import type { TopSongsRefreshControl } from '../cache/top-songs-repository.js';
 import { requireAdmin, requireAuthentication } from './auth-routes.js';
+import { StreamFailureRegistry } from '../playback/stream-failure-registry.js';
+import { MusicLookupError } from '../music-source/source-http-error.js';
 
 export async function registerMusicSourceRoutes(
   app: FastifyInstance,
@@ -22,6 +24,14 @@ export async function registerMusicSourceRoutes(
   catalogSync?: CatalogSyncControl,
   topSongsRefresh?: TopSongsRefreshControl,
 ): Promise<void> {
+  const streamFailures = new StreamFailureRegistry();
+  app.get('/api/music/playback-failures/:id', async (request, reply) => {
+    const denied = requireAuthentication(request, reply);
+    if (denied) return denied;
+    const { id } = request.params as { id: string };
+    return reply.header('cache-control', 'private, no-store').send(
+      streamFailures.get(request.authSession!.response.user.id, id));
+  });
   app.get('/api/admin/music-source', async (request, reply) => {
     const denied = requireAdmin(request, reply);
     if (denied) return denied;
@@ -382,7 +392,11 @@ export async function registerMusicSourceRoutes(
   app.get('/api/music/tracks/:reference/stream', async (request, reply) => {
     const denied = requireAuthentication(request, reply);
     if (denied) return denied;
-    if (!service) return notConfigured(request, reply);
+    if (!service) {
+      streamFailures.record(request.authSession!.response.user.id, (request.query as { playbackRequest?: string }).playbackRequest,
+        new MusicSourceUnavailableError('Source configuration unavailable'));
+      return notConfigured(request, reply);
+    }
     const { reference } = request.params as { reference: string };
     const controller = new AbortController();
     request.raw.once('aborted', () => controller.abort());
@@ -410,6 +424,7 @@ export async function registerMusicSourceRoutes(
         rangeRequested: Boolean(range),
       });
     } catch (error) {
+      streamFailures.record(request.authSession!.response.user.id, (request.query as { playbackRequest?: string }).playbackRequest, error);
       return mediaFailure(request, reply, error);
     }
   });
@@ -512,6 +527,7 @@ async function libraryResponse(
   try {
     return reply.send(await operation());
   } catch (error) {
+    if (error instanceof MusicLookupError) return metadataFailure(request, reply, error);
     if (error instanceof MusicSourceUnavailableError) {
       return reply.code(503).send({
         code: 'MUSIC_SOURCE_NOT_CONFIGURED',
@@ -609,6 +625,7 @@ function mediaFailure(
   reply: FastifyReply,
   error: unknown,
 ): FastifyReply {
+  if (error instanceof MusicLookupError) return metadataFailure(request, reply, error);
   if (error instanceof ImageCachePendingError) {
     return reply
       .code(503)
@@ -621,9 +638,9 @@ function mediaFailure(
       });
   }
   if (error instanceof MusicSourceUnavailableError) {
-    return reply.code(404).send({
-      code: 'MEDIA_NOT_FOUND',
-      message: 'No encontramos ese contenido.',
+    return reply.code(503).send({
+      code: 'MUSIC_SOURCE_UNAVAILABLE',
+      message: 'El servicio musical no está disponible.',
       requestId: request.id,
     });
   }
@@ -633,6 +650,16 @@ function mediaFailure(
     message: 'No pudimos obtener el contenido de la biblioteca.',
     requestId: request.id,
   });
+}
+
+function metadataFailure(request: FastifyRequest, reply: FastifyReply, error: MusicLookupError): FastifyReply {
+  const { failure } = error;
+  request.log.warn({ metadataFailure: { code: failure.code, retryAfterMs: failure.retryAfterMs } }, 'Music metadata lookup failed');
+  if (failure.retryAfterMs !== undefined) reply.header('retry-after', String(Math.ceil(failure.retryAfterMs / 1000)));
+  return reply.code(failure.code === 'not_found' ? 404 : failure.code === 'service_unavailable' ? 503 : 502)
+    .header('cache-control', 'private, no-store')
+    .send({ code: 'MUSIC_METADATA_FAILED', message: failure.code === 'not_found'
+      ? 'No encontramos esta canción.' : 'No pudimos consultar esta canción.', failure });
 }
 
 function notConfigured(request: FastifyRequest, reply: FastifyReply): FastifyReply {

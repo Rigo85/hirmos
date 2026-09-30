@@ -19,6 +19,7 @@
     "dev:api": "npm run build -w @hirmos/contracts && npm run build -w @hirmos/domain && npm run dev -w @hirmos/api",
     "dev:web": "npm run build -w @hirmos/contracts && npm run start -w @hirmos/web",
     "test": "npm run test --workspaces --if-present",
+    "test:playback:pg": "node scripts/test-playback-guarantees.mjs",
     "test:e2e": "npm run e2e -w @hirmos/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "db:migrate": "npm run db:migrate -w @hirmos/api",

@@ -23,7 +23,8 @@ export type AppIconName =
   | 'shuffle'
   | 'settings'
   | 'users'
-  | 'volume';
+  | 'volume'
+  | 'volume-muted';
 
 @Component({
   selector: 'app-icon',
@@ -93,6 +94,9 @@ export type AppIconName =
         }
         @case ('volume') {
           <path d="M4 10v4h3.3l4.2 3.6V6.4L7.3 10zM15.3 8.8a4.6 4.6 0 0 1 0 6.4M17.9 6.5a7.8 7.8 0 0 1 0 11" />
+        }
+        @case ('volume-muted') {
+          <path d="M4 10v4h3.3l4.2 3.6V6.4L7.3 10zM16 9l5 6M21 9l-5 6" />
         }
         @case ('lyrics') {
           <rect x="8.6" y="2.7" width="6.8" height="13" rx="3.4" />

@@ -7,10 +7,12 @@ import { SessionStore } from '../../core/session.store';
 import { AppIconComponent } from '../../shared/app-icon.component';
 import { LyricsPanelComponent } from '../lyrics/lyrics-panel.component';
 import { FavoritesService } from '../../core/favorites.service';
+import { PlaybackFailuresComponent } from '../../shared/playback-failures.component';
+import { AudioPermissionComponent } from '../../shared/audio-permission.component';
 
 @Component({
   selector: 'app-player-shell',
-  imports: [RouterLink, RouterLinkActive, RouterOutlet, AppIconComponent, LyricsPanelComponent],
+  imports: [RouterLink, RouterLinkActive, RouterOutlet, AppIconComponent, LyricsPanelComponent, PlaybackFailuresComponent, AudioPermissionComponent],
   templateUrl: './player-shell.component.html',
 })
 export class PlayerShellComponent {

@@ -6,6 +6,10 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./playback-protocol": {
+      "types": "./dist/playback-protocol.d.ts",
+      "default": "./dist/playback-protocol.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"

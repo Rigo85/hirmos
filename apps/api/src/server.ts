@@ -15,6 +15,7 @@ import { SourceCredentialCipher } from './music-source/source-credential-cipher.
 import { AuthService } from './auth/auth-service.js';
 import { PlaybackRepository } from './playback/playback-repository.js';
 import { PlaybackService } from './playback/playback-service.js';
+import { PlaybackActivityProjector } from './playback/playback-activity-projector.js';
 import { SessionRevocationNotifier } from './auth/session-revocation.js';
 import { ActivityRepository } from './activity/activity-repository.js';
 import { CatalogRepository } from './activity/catalog-repository.js';
@@ -102,7 +103,7 @@ const musicSourceService = database && config.DATA_ENCRYPTION_KEY
     )
   : undefined;
 const playbackService = database
-  ? new PlaybackService(new PlaybackRepository(database), activityRepository)
+  ? new PlaybackService(new PlaybackRepository(database))
   : undefined;
 const catalogSync = musicSourceService
   ? new CatalogSyncCoordinator(musicSourceService)
@@ -117,6 +118,7 @@ const app = await buildApp({
   database: database ?? undefined,
 });
 thirdPartyTelemetry.attachLogger(app.log);
+const playbackActivityProjector = database ? new PlaybackActivityProjector(database, app.log) : null;
 const cacheMaintenanceWorker = cacheRepository && objectStore
   ? new CacheMaintenanceWorker(
       cacheRepository,
@@ -166,6 +168,7 @@ async function shutdown(signal: string): Promise<void> {
   app.log.info({ signal }, 'Graceful shutdown started');
   io.close();
   await outboxWorker?.stop();
+  await playbackActivityProjector?.stop();
   catalogSyncWorker?.stop();
   cacheMaintenanceWorker?.stop();
   lyricsCacheBackfillWorker?.stop();
@@ -181,6 +184,7 @@ process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
 try {
   await app.listen({ host: config.HOST, port: config.PORT });
+  playbackActivityProjector?.start();
   catalogSyncWorker?.start();
   cacheMaintenanceWorker?.start();
   lyricsCacheBackfillWorker?.start();

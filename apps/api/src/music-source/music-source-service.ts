@@ -1,6 +1,7 @@
 import type {
   AdminMusicSource, Album, AlbumDetail, Artist, ArtistDetail, HabitAlbum, HabitArtist,
   HabitKind, HabitPeriod, HabitsResponse, HabitTrack, LibraryHomeResponse, SearchResponse, Track,
+  ResolveTracksResponse, MusicLookupFailure,
 } from '@hirmos/contracts';
 import { MusicSourceRepository, type StoredMusicSource } from './music-source-repository.js';
 import { SourceCredentialCipher } from './source-credential-cipher.js';
@@ -12,6 +13,7 @@ import {
   type MusicSourceAdapterFactory,
 } from './music-source-adapter-factory.js';
 import { decodeTrackReference, encodeTrackReference } from './track-reference.js';
+import { MusicLookupError, musicLookupFailure } from './source-http-error.js';
 import type { ActivityRepository, HabitEvidence } from '../activity/activity-repository.js';
 import type { CatalogRepository } from '../activity/catalog-repository.js';
 import type { LyricsRepository } from '../lyrics/lyrics-repository.js';
@@ -640,13 +642,14 @@ export class MusicSourceService {
   }
 
   public async track(userId: string, reference: string, signal?: AbortSignal) {
-    const [track] = await this.resolveTracks(userId, [reference]);
-    if (!track) throw new MusicSourceUnavailableError('Track metadata unavailable');
+    const result = await this.resolveTrackResults(userId, [reference]);
+    const [track] = result.tracks;
+    if (!track) throw new MusicLookupError(result.failures?.[0] ?? { reference, code: 'unknown' });
     return track;
   }
 
   public async tracksByReferences(userId: string, references: string[]) {
-    return { tracks: await this.resolveTracks(userId, references) };
+    return this.resolveTrackResults(userId, references);
   }
 
   public async favoriteTracks(userId: string, limit: number, cursor?: string) {
@@ -704,31 +707,52 @@ export class MusicSourceService {
   }
 
   private async resolveTracks(userId: string, references: string[]): Promise<Track[]> {
+    const result = await this.resolveTrackResults(userId, references);
+    const transient = result.failures?.find(failure => failure.code !== 'not_found');
+    if (transient) throw new MusicLookupError(transient);
+    return result.tracks;
+  }
+
+  private async resolveTrackResults(userId: string, references: string[]): Promise<ResolveTracksResponse> {
     const source = await this.requireCurrent();
+    const failures: MusicLookupFailure[] = [];
     const decoded = references.flatMap((reference) => {
       const identity = decodeTrackReference(reference);
-      return identity?.sourceId === source.id ? [identity] : [];
+      if (identity?.sourceId === source.id) return [identity];
+      failures.push({ reference, code: 'not_found' });
+      return [];
     });
     const cached = await this.catalog?.tracksByIds(
       source.id, decoded.map((identity) => identity.remoteId),
     ).catch(() => []) ?? [];
     const byId = new Map(cached.map((track) => [track.id, publicTrack(source.id, track)]));
     const missing = decoded.filter((identity) => !byId.has(identity.remoteId));
+    const deadline = Date.now() + 8_000;
     for (let index = 0; index < missing.length; index += 6) {
+      // Do not turn a queue preload into hundreds of requests during a known
+      // provider outage, nor give each subsequent batch a fresh time budget.
+      const unavailable = failures.find(failure => failure.code === 'service_unavailable' || (failure.retryAfterMs ?? 0) > 0);
+      if (unavailable || Date.now() >= deadline) {
+        failures.push(...missing.slice(index).map(identity => ({
+          ...(unavailable ?? { code: 'timeout' as const }),
+          reference: encodeTrackReference(source.id, identity.remoteId),
+        })));
+        break;
+      }
       await Promise.all(missing.slice(index, index + 6).map(async (identity) => {
         try {
           const track = await this.fetchTrack(
-            encodeTrackReference(source.id, identity.remoteId), AbortSignal.timeout(8_000),
+            encodeTrackReference(source.id, identity.remoteId), AbortSignal.timeout(Math.max(1, deadline - Date.now())),
           );
           byId.set(identity.remoteId, track);
-        } catch { /* A removed source item is omitted from this response. */ }
+        } catch (error) { failures.push(musicLookupFailure(encodeTrackReference(source.id, identity.remoteId), error)); }
       }));
     }
     const ordered = decoded.flatMap((identity) => {
       const track = byId.get(identity.remoteId);
       return track ? [track] : [];
     });
-    return this.personalizeTracks(userId, ordered);
+    return { tracks: await this.personalizeTracks(userId, ordered), ...(failures.length ? { failures } : {}) };
   }
 
   private async fetchTrack(reference: string, signal?: AbortSignal): Promise<Track> {

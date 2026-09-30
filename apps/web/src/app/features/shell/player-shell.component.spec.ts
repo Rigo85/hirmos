@@ -29,13 +29,16 @@ describe('PlayerShellComponent', () => {
           useValue: {
             track: signal(null), positionSeconds: signal(0), volume: signal(1),
             phase: signal('paused'),
-            setVolume: vi.fn(),
+            setVolume: vi.fn(), muted: signal(false), toggleMuted: vi.fn(),
           },
         },
         {
           provide: PlaybackSyncService,
           useValue: {
             snapshot: signal(null), connected: signal(true), error: signal(null),
+            unconfirmedFailure: signal(null), authenticationRequired: signal(false),
+            waitingForAudio: signal(false),
+            retryWaitSeconds: signal(0),
             connect: vi.fn(), disconnect: vi.fn(), trackFor: vi.fn(), ownsLease: () => false,
             hasActiveRemotePlayer: () => false, previous: vi.fn(), next: vi.fn(), toggle: vi.fn(),
             seek: vi.fn(), removeQueueItem: vi.fn(), claimHere: vi.fn(),
@@ -51,6 +54,42 @@ describe('PlayerShellComponent', () => {
         },
       ],
     }).compileComponents();
+  });
+
+  it('labels volume as local output and exposes a mute toggle', () => {
+    const fixture = TestBed.createComponent(PlayerShellComponent);
+    fixture.detectChanges();
+    const player = TestBed.inject(AudioPlayerService);
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('[aria-label="Volumen de este dispositivo"]')).not.toBeNull();
+    const button = root.querySelector<HTMLButtonElement>('[aria-label="Silenciar este dispositivo"]')!;
+    button.click();
+    expect(player.toggleMuted).toHaveBeenCalledOnce();
+    player.muted.set(true);
+    fixture.detectChanges();
+    expect(button.getAttribute('aria-label')).toBe('Activar sonido en este dispositivo');
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('keeps cooldown visible by playback controls without an error toast, including mobile', () => {
+    const player=TestBed.inject(AudioPlayerService) as unknown as {track:WritableSignal<Record<string,unknown>>};
+    player.track.set({id:'track',title:'Prueba',artist:'Artista',album:'Álbum',durationMs:120_000,coverUrl:null});
+    const playback=TestBed.inject(PlaybackSyncService);
+    playback.retryWaitSeconds.set(5);
+    const fixture=TestBed.createComponent(PlayerShellComponent); fixture.detectChanges();
+    const root=fixture.nativeElement as HTMLElement;
+    const play=root.querySelector<HTMLButtonElement>('.player-play')!;
+    expect(play.disabled).toBe(true);
+    expect(root.querySelector('.player-track [role="timer"]')?.textContent).toContain('5 s');
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+    root.querySelector<HTMLButtonElement>('.mobile-player-open')!.click(); fixture.detectChanges();
+    expect(root.querySelector<HTMLButtonElement>('.mobile-now-playing__play')!.disabled).toBe(true);
+    expect(root.querySelector('.mobile-now-playing__progress [role="timer"]')?.textContent).toContain('5 s');
+    playback.retryWaitSeconds.set(0); fixture.detectChanges();
+    expect(play.disabled).toBe(false);
+    expect(root.querySelector<HTMLButtonElement>('.mobile-now-playing__play')!.disabled).toBe(false);
+    expect(root.querySelector('[role="timer"]')).toBeNull();
+    expect(playback.toggle).not.toHaveBeenCalled();
   });
 
   it('collapses the desktop sidebar and remembers the browser preference', () => {

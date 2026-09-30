@@ -17,14 +17,9 @@ import {
   fetchStreamingResponseWithRetry, fetchWithRetry, parseRetryAfter, type ThirdPartyTelemetry,
 } from '../integrations/third-party-request.js';
 
-export class MusicSourceHttpError extends Error {
-  public constructor(
-    public readonly status: number,
-    public readonly retryAfterMs: number | null = null,
-  ) {
-    super(`Music source returned HTTP ${status}`);
-  }
-}
+import { SourceHttpError as MusicSourceHttpError } from './source-http-error.js';
+import { SourceProtocolError } from './source-http-error.js';
+export { SourceHttpError as MusicSourceHttpError } from './source-http-error.js';
 
 export interface NavidromeAdapterOptions {
   baseUrl: URL;
@@ -386,7 +381,7 @@ export class NavidromeAdapter implements MusicSourceAdapter {
     const envelope = (await httpResponse.json()) as SubsonicEnvelope<T>;
     const response = envelope['subsonic-response'];
     if (!response || response.status !== 'ok') {
-      throw new Error(`Music source rejected the request (${response?.error?.code ?? 'unknown'})`);
+      throw new SourceProtocolError(response?.error?.code);
     }
     return response;
   }

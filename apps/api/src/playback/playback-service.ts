@@ -1,12 +1,10 @@
 import type { PlaybackCommandResult, PlaybackSnapshot } from '@hirmos/contracts';
 import { decodeTrackReference } from '../music-source/track-reference.js';
 import { PlaybackRepository } from './playback-repository.js';
-import type { ActivityRepository } from '../activity/activity-repository.js';
 
 export class PlaybackService {
   public constructor(
     private readonly repository: PlaybackRepository,
-    private readonly activity?: ActivityRepository,
   ) {}
 
   public registerDevice(input: {
@@ -40,28 +38,19 @@ export class PlaybackService {
         snapshot,
       }));
     }
-    const result = await this.repository.select({
+    return this.repository.select({
       ...input,
       sourceId: reference.sourceId,
       remoteTrackId: reference.remoteId,
     });
-    if (result.status === 'accepted') {
-      await this.capture(() => this.activity?.recordEvent({
-        userId: input.userId, deviceId: input.deviceId, snapshot: result.snapshot, type: 'started',
-      }));
-    }
-    return result;
   }
 
   public async update(input: Parameters<PlaybackRepository['update']>[0]): Promise<PlaybackCommandResult> {
-    const before = this.activity ? await this.repository.snapshot(input.userId) : null;
-    const result = await this.repository.update(input);
-    if (before && result.status === 'accepted') {
-      await this.capture(() => this.activity?.recordProgress({
-        userId: input.userId, before, after: result.snapshot,
-      }));
-    }
-    return result;
+    return this.repository.update(input);
+  }
+
+  public failure(input: Parameters<PlaybackRepository['failure']>[0]): Promise<PlaybackCommandResult> {
+    return this.repository.failure(input);
   }
 
   public async selectContext(input: {
@@ -79,7 +68,7 @@ export class PlaybackService {
     if (!sourceId || references.some((reference) => !reference || reference.sourceId !== sourceId)) {
       return { status: 'conflict', snapshot: await this.repository.snapshot(input.userId) };
     }
-    const result = await this.repository.selectContext({
+    return this.repository.selectContext({
       userId: input.userId,
       deviceId: input.deviceId,
       commandId: input.commandId,
@@ -90,45 +79,12 @@ export class PlaybackService {
       contextType: input.contextType,
       contextRef: input.contextRef,
     });
-    if (result.status === 'accepted') {
-      await this.capture(() => this.activity?.recordEvent({
-        userId: input.userId, deviceId: input.deviceId, snapshot: result.snapshot, type: 'started',
-      }));
-    }
-    return result;
   }
 
   public async control(input: Parameters<PlaybackRepository['control']>[0] & {
     reason?: 'user' | 'ended';
   }): Promise<PlaybackCommandResult> {
-    const before = this.activity ? await this.repository.snapshot(input.userId) : null;
-    const result = await this.repository.control(input);
-    if (before && result.status === 'accepted') {
-      if (input.action === 'next') {
-        await this.capture(() => this.activity?.recordEvent({
-          userId: input.userId, deviceId: input.deviceId, snapshot: before,
-          type: input.reason === 'ended' ? 'completed' : 'skipped',
-        }));
-        if (result.snapshot.currentTrackRef !== before.currentTrackRef) {
-          await this.capture(() => this.activity?.recordEvent({
-            userId: input.userId, deviceId: input.deviceId, snapshot: result.snapshot, type: 'started',
-          }));
-        }
-      } else if (input.action === 'previous') {
-        if (result.snapshot.currentTrackRef !== before.currentTrackRef) {
-          await this.capture(() => this.activity?.recordEvent({
-            userId: input.userId, deviceId: input.deviceId, snapshot: result.snapshot, type: 'started',
-          }));
-        }
-      } else {
-        const type = input.action === 'play' ? 'resumed'
-          : input.action === 'pause' ? 'paused' : 'seeked';
-        await this.capture(() => this.activity?.recordEvent({
-          userId: input.userId, deviceId: input.deviceId, snapshot: result.snapshot, type,
-        }));
-      }
-    }
-    return result;
+    return this.repository.control(input);
   }
 
   public removeQueueItem(
@@ -137,7 +93,4 @@ export class PlaybackService {
     return this.repository.removeQueueItem(input);
   }
 
-  private async capture(operation: () => Promise<void> | undefined): Promise<void> {
-    try { await operation(); } catch { /* Telemetry must never break playback. */ }
-  }
 }

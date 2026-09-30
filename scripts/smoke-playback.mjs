@@ -67,6 +67,7 @@ try {
   if (result.snapshot.queue.length < 2) throw new Error('Queue was not persisted');
 
   result = await command(second, 'playback:control', {
+    anchor: anchor(result.snapshot),
     commandId: randomUUID(), expectedRevision: result.snapshot.revision, action: 'pause',
   });
   assertAccepted(result, 'remote pause');
@@ -75,6 +76,7 @@ try {
   }
 
   result = await command(second, 'playback:control', {
+    anchor: anchor(result.snapshot),
     commandId: randomUUID(), expectedRevision: result.snapshot.revision,
     action: 'seek', positionMs: 12_000,
   });
@@ -82,6 +84,7 @@ try {
   if (result.snapshot.positionMs !== 12_000) throw new Error('Remote seek was not persisted');
 
   result = await command(second, 'playback:control', {
+    anchor: anchor(result.snapshot),
     commandId: randomUUID(), expectedRevision: result.snapshot.revision, action: 'previous',
   });
   assertAccepted(result, 'remote previous');
@@ -95,6 +98,7 @@ try {
   if (result.snapshot.activeDeviceId !== secondId) throw new Error('Lease transfer failed');
 
   const stale = await command(first, 'playback:update', {
+    anchor: anchor(beforeTransfer),
     commandId: randomUUID(), expectedRevision: result.snapshot.revision,
     leaseEpoch: beforeTransfer.leaseEpoch, status: 'playing', positionMs: 50_000,
   });
@@ -113,10 +117,12 @@ try {
 
   const duplicateId = randomUUID();
   const accepted = await command(second, 'playback:control', {
+    anchor: anchor(result.snapshot),
     commandId: duplicateId, expectedRevision: result.snapshot.revision, action: 'pause',
   });
   assertAccepted(accepted, 'idempotent command first attempt');
   const duplicate = await command(second, 'playback:control', {
+    anchor: anchor(result.snapshot),
     commandId: duplicateId, expectedRevision: result.snapshot.revision, action: 'pause',
   });
   if (duplicate.status !== 'duplicate') throw new Error('Duplicate command was not identified');
@@ -139,8 +145,13 @@ try {
 function client(deviceId, deviceName) {
   return io(apiOrigin, {
     path: '/socket.io', autoConnect: false, transports: ['websocket'],
-    extraHeaders: { cookie }, auth: { deviceId, deviceName, deviceType: 'desktop' },
+    extraHeaders: { cookie }, auth: { protocolVersion: 3, deviceId, deviceName, deviceType: 'desktop' },
   });
+}
+
+function anchor(s) {
+  return { attempt: s.attempt, currentQueueItemId: s.currentQueueItemId,
+    playbackInstanceId: s.playbackInstanceId, leaseEpoch: s.leaseEpoch };
 }
 
 function command(socket, event, payload) {

@@ -19,7 +19,8 @@ describe('PlaybackRepository contextual queues', () => {
         }
         if (text.includes('SELECT s.id, s.revision::text')) {
           return result([{
-            id: 'session', revision: '8', status: 'playing',
+            id: 'session', revision: '8', status: 'playing', queue_rows: [],
+            queue_revision: '1', playback_instance_id: 'instance',
             current_queue_item_id: 'current', position_ms: 0,
             position_observed_at: new Date('2026-09-03T00:00:00Z'),
             active_device_id: '22222222-2222-4222-8222-222222222222',
@@ -32,7 +33,9 @@ describe('PlaybackRepository contextual queues', () => {
       }),
     } as unknown as Database;
 
-    const repository = new PlaybackRepository(database);
+    // SQL-shape tests exercise the transaction body; the real PostgreSQL suite
+    // exercises locking, receipts, authorization and atomic outbox publication.
+    const repository = new PlaybackRepository(database, true);
     const response = await repository.selectContext({
       userId: '11111111-1111-4111-8111-111111111111',
       deviceId: '22222222-2222-4222-8222-222222222222',
@@ -66,7 +69,8 @@ describe('PlaybackRepository contextual queues', () => {
         }
         if (text.includes('SELECT s.id, s.revision::text')) {
           return result([{
-            id: 'session', revision: '9', status: 'playing',
+            id: 'session', revision: '9', status: 'playing', queue_rows: [],
+            queue_revision: '1', playback_instance_id: 'instance',
             current_queue_item_id: 'current', position_ms: 0,
             position_observed_at: new Date('2026-09-05T00:00:00Z'),
             active_device_id: '22222222-2222-4222-8222-222222222222',
@@ -79,7 +83,7 @@ describe('PlaybackRepository contextual queues', () => {
       }),
     } as unknown as Database;
 
-    const repository = new PlaybackRepository(database);
+    const repository = new PlaybackRepository(database, true);
     const response = await repository.select({
       userId: '11111111-1111-4111-8111-111111111111',
       deviceId: '55555555-5555-4555-8555-555555555555',
@@ -109,7 +113,8 @@ describe('PlaybackRepository contextual queues', () => {
         }
         if (text.includes('SELECT s.id, s.revision::text')) {
           return result([{
-            id: 'session', revision: '9', status: 'playing',
+            id: 'session', revision: '9', status: 'playing', queue_rows: [],
+            queue_revision: '1', playback_instance_id: 'instance',
             current_queue_item_id: 'current', position_ms: 12_000,
             position_observed_at: new Date('2026-09-04T00:00:00Z'),
             active_device_id: '22222222-2222-4222-8222-222222222222',
@@ -122,19 +127,20 @@ describe('PlaybackRepository contextual queues', () => {
       }),
     } as unknown as Database;
 
-    const repository = new PlaybackRepository(database);
+    const repository = new PlaybackRepository(database, true);
     const response = await repository.control({
       userId: '11111111-1111-4111-8111-111111111111',
       deviceId: '22222222-2222-4222-8222-222222222222',
       commandId: '44444444-4444-4444-8444-444444444444',
       expectedRevision: 8,
       action: 'play',
+      anchor: { attempt: 0, currentQueueItemId: null, playbackInstanceId: null, leaseEpoch: 0 },
     });
 
     expect(response.status).toBe('accepted');
     expect(controlQuery).toContain("$5 = 'play' OR");
     expect(controlQuery).toContain('active_device_id = CASE');
-    expect(controlQuery).toContain("now() + interval '30 seconds'");
+    expect(controlQuery).toContain("statement_timestamp() + interval '30 seconds'");
   });
 });
 
