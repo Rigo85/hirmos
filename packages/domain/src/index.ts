@@ -18,6 +18,22 @@ export function nextQueueItem<T extends { id: string; trackRef: string }>(
   return candidates.find(item => !omitted.has(item.trackRef)) ?? null;
 }
 
+/** Previous restarts after three seconds; before that it follows visible order. */
+export function previousQueueItem<T extends { id: string; trackRef: string }>(
+  queue: readonly T[], currentId: string | null,
+  options: { positionMs: number; omitted?: readonly string[]; repeat?: 'off' | 'one' | 'all' },
+): T | null {
+  const index = queue.findIndex(item => item.id === currentId);
+  if (index < 0) return null;
+  const omitted = new Set(options.omitted ?? []);
+  const current = queue[index]!;
+  if (options.positionMs >= 3_000 && !omitted.has(current.trackRef)) return current;
+  const candidates = queue.slice(0, index).reverse();
+  if (options.repeat === 'all') candidates.push(...queue.slice(index).reverse());
+  return candidates.find(item => !omitted.has(item.trackRef))
+    ?? (!omitted.has(current.trackRef) ? current : null);
+}
+
 export function claimPlaybackLease(
   current: PlaybackLease,
   deviceId: string,

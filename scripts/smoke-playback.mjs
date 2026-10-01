@@ -145,7 +145,7 @@ try {
 function client(deviceId, deviceName) {
   return io(apiOrigin, {
     path: '/socket.io', autoConnect: false, transports: ['websocket'],
-    extraHeaders: { cookie }, auth: { protocolVersion: 3, deviceId, deviceName, deviceType: 'desktop' },
+    extraHeaders: { cookie }, auth: { protocolVersion: 5, deviceId, deviceName, deviceType: 'desktop' },
   });
 }
 

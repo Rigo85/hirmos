@@ -9,10 +9,15 @@ import { LyricsPanelComponent } from '../lyrics/lyrics-panel.component';
 import { FavoritesService } from '../../core/favorites.service';
 import { PlaybackFailuresComponent } from '../../shared/playback-failures.component';
 import { AudioPermissionComponent } from '../../shared/audio-permission.component';
+import { PlaylistPickerComponent } from '../../shared/playlist-picker.component';
+import { QueueActionsComponent } from '../../shared/queue-actions.component';
+import { QueueEditorComponent } from '../../shared/queue-editor.component';
+import { RepeatButtonComponent } from '../../shared/repeat-button.component';
+import { PlaybackNoticeComponent } from '../../shared/playback-notice.component';
 
 @Component({
   selector: 'app-player-shell',
-  imports: [RouterLink, RouterLinkActive, RouterOutlet, AppIconComponent, LyricsPanelComponent, PlaybackFailuresComponent, AudioPermissionComponent],
+  imports: [RouterLink, RouterLinkActive, RouterOutlet, AppIconComponent, LyricsPanelComponent, PlaybackFailuresComponent, AudioPermissionComponent, PlaylistPickerComponent, QueueActionsComponent, QueueEditorComponent, RepeatButtonComponent, PlaybackNoticeComponent],
   templateUrl: './player-shell.component.html',
 })
 export class PlayerShellComponent {
@@ -38,9 +43,14 @@ export class PlayerShellComponent {
     const snapshot = this.playback.snapshot();
     return snapshot?.currentTrackRef
       ? this.playback.trackFor(snapshot.currentTrackRef)
-      : this.player.track();
+      : snapshot ? null : this.player.track();
+  });
+  protected readonly canPlay = computed(() => {
+    const snapshot = this.playback.snapshot();
+    return Boolean(this.currentTrack() || snapshot?.queue[snapshot.queuePastCount ?? 0]);
   });
   protected readonly displayedPositionSeconds = computed(() => {
+    if (!this.currentTrack()) return 0;
     const preview = this.mobileSeekPreviewSeconds();
     if (preview !== null) return preview;
     return this.playback.ownsLease()
@@ -57,6 +67,13 @@ export class PlayerShellComponent {
     this.playback.connect();
     const positionTimer = setInterval(() => this.positionClock.set(Date.now()), 1_000);
     this.destroyRef.onDestroy(() => clearInterval(positionTimer));
+    effect(() => {
+      if (this.playback.snapshot() && !this.playback.snapshot()?.currentTrackRef) {
+        this.closeMobilePlayer();
+        this.mobileSeekPreviewSeconds.set(null);
+        this.lyricsOpen.set(false);
+      }
+    });
     effect((onCleanup) => {
       if (!this.mobileMenuOpen() && !this.mobilePlayerOpen()) return;
       const previousOverflow = this.document.body.style.overflow;

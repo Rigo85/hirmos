@@ -5,6 +5,8 @@ import {
   playbackAnchorSchema,
   playbackFailureSchema,
   playbackRenderPhaseSchema,
+  queueEditSchema,
+  repeatCommandSchema,
   PLAYBACK_PROTOCOL_VERSION,
   type ClientToServerEvents,
   type PlaybackCommandAck,
@@ -34,12 +36,15 @@ const deviceSchema = z.object({
 });
 const commandBase = z.object({ commandId: z.uuid(), expectedRevision: z.number().int().nonnegative() });
 const claimSchema = commandBase;
+const selectPlaylistSchema=commandBase.extend({playlistId:z.uuid(),playlistRevision:z.number().int().nonnegative(),itemId:z.uuid().nullable(),shuffle:z.boolean(),replaceQueueRevision:z.number().int().nonnegative().optional()});
 const selectSchema = commandBase.extend({ trackRef: z.string().min(1).max(2048) });
+const selectFavoritesSchema=commandBase.extend({shuffle:z.boolean(),trackRef:z.string().max(2048).nullable(),replaceQueueRevision:z.number().int().nonnegative().optional()});
 const selectContextSchema = commandBase.extend({
-  trackRefs: z.array(z.string().min(1).max(2048)).min(1).max(500),
+  trackRefs: z.array(z.string().min(1).max(2048)).min(1).max(5000),
   selectedIndex: z.number().int().nonnegative(),
   contextType: z.enum(['album', 'artist', 'search', 'home', 'genre', 'favorites']),
   contextRef: z.string().max(2048).nullable(),
+  replaceQueueRevision:z.number().int().nonnegative().optional(),
 }).refine((value) => value.selectedIndex < value.trackRefs.length, {
   message: 'selectedIndex must reference a track',
 });
@@ -145,10 +150,18 @@ export function createSocketServer(
     });
     socket.on('playback:claim', (command, ack) => void execute('claim', claimSchema, command, ack, (value) =>
       playbackService!.claim({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
+    socket.on('playback:repeat', (command, ack) => void execute('repeat', repeatCommandSchema, command, ack, value =>
+      playbackService!.setRepeat({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
     socket.on('playback:select', (command, ack) => void execute('select', selectSchema, command, ack, (value) =>
       playbackService!.select({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
     socket.on('playback:select-context', (command, ack) => void execute('select-context', selectContextSchema, command, ack, (value) =>
       playbackService!.selectContext({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
+    socket.on('playback:select-playlist', (command, ack) => void execute('select-playlist', selectPlaylistSchema, command, ack, value=>
+      playbackService!.selectPlaylist({...value,userId:socket.data.userId,deviceId:socket.data.deviceId})));
+    socket.on('playback:select-favorites',(command,ack)=>void execute('select-favorites',selectFavoritesSchema,command,ack,value=>
+      playbackService!.selectFavorites({...value,userId:socket.data.userId,deviceId:socket.data.deviceId})));
+    socket.on('playback:queue-edit', (command,ack)=>void execute('queue-edit',queueEditSchema,command,ack,value=>
+      playbackService!.editQueue({...value,userId:socket.data.userId,deviceId:socket.data.deviceId})));
     socket.on('playback:update', (command, ack) => void execute('update', updateSchema, command, ack, (value) =>
       playbackService!.update({ ...value, userId: socket.data.userId, deviceId: socket.data.deviceId })));
     socket.on('playback:failure', (command, ack) => void execute('failure', failureSchema, command, ack, (value) =>
@@ -191,8 +204,14 @@ export function createSocketServer(
             elapsedMs: notice?.elapsedMs, outcome: notice?.outcome, commandId: commandIdOf(parsed.data) } },
             'Playback failure handled');
         }
-        ack?.(result);
-        io.to(room).emit('playback:snapshot', result.snapshot);
+        if(commandName==='update' && result.status!=='conflict') {
+          const {queue:_queue,...state}=result.snapshot;
+          ack?.({...result,snapshot:state});
+          io.to(room).emit('playback:state',state);
+        } else {
+          ack?.(result);
+          io.to(room).emit('playback:snapshot', result.snapshot);
+        }
         const fields = { playbackCommand: {
           command: commandName,
           commandId: commandIdOf(parsed.data),
@@ -206,7 +225,7 @@ export function createSocketServer(
         } else {
           logger?.info(fields, 'Playback command completed');
         }
-        if (result.status === 'conflict') {
+        if (result.status === 'conflict' && !result.error) {
           emitError('PLAYBACK_CONFLICT', 'El hilo cambió; se cargó el estado más reciente.');
         }
       } catch (error) {

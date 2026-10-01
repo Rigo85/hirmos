@@ -23,27 +23,17 @@ export class FavoritesComponent {
   public constructor() { void this.load(); }
 
   protected play(track: Track): void {
-    const tracks = this.tracks();
-    void this.playback.selectContext(
-      tracks, tracks.findIndex((item) => item.id === track.id), 'favorites', 'favorites',
-    );
+    void this.playback.selectFavorites(false,track.id);
   }
 
   protected async playAll(): Promise<void> {
-    const tracks = await this.completePlaybackContext();
-    if (tracks.length) void this.playback.selectContext(
-      tracks, 0, 'favorites', 'favorites',
-    );
+    if(this.preparingPlayback())return;this.preparingPlayback.set(true);
+    try{await this.playback.selectFavorites();}finally{this.preparingPlayback.set(false);}
   }
 
   protected async shuffle(): Promise<void> {
-    const tracks = [...await this.completePlaybackContext()];
-    if (!tracks.length) return;
-    for (let index = tracks.length - 1; index > 0; index--) {
-      const replacement = Math.floor(Math.random() * (index + 1));
-      [tracks[index], tracks[replacement]] = [tracks[replacement]!, tracks[index]!];
-    }
-    void this.playback.selectContext(tracks, 0, 'favorites', 'favorites');
+    if(this.preparingPlayback())return;this.preparingPlayback.set(true);
+    try{await this.playback.selectFavorites(true);}finally{this.preparingPlayback.set(false);}
   }
 
   protected removeIfUnfavorited(track: Track, favorite: boolean): void {
@@ -71,19 +61,4 @@ export class FavoritesComponent {
     }
   }
 
-  private async completePlaybackContext(): Promise<Track[]> {
-    if (!this.nextCursor()) return this.tracks();
-    this.preparingPlayback.set(true); this.error.set(null);
-    try {
-      const result = await firstValueFrom(this.http.get<TrackListResponse>(
-        '/api/library/favorites', { params: { limit: 500 } },
-      ));
-      return result.tracks;
-    } catch {
-      this.error.set('No pudimos preparar la lista completa para reproducirla.');
-      return [];
-    } finally {
-      this.preparingPlayback.set(false);
-    }
-  }
 }

@@ -62,6 +62,7 @@ export class PlaybackService {
     selectedIndex: number;
     contextType: 'album' | 'artist' | 'search' | 'home' | 'genre' | 'favorites';
     contextRef: string | null;
+    replaceQueueRevision?:number;
   }): Promise<PlaybackCommandResult> {
     const references = input.trackRefs.map(decodeTrackReference);
     const sourceId = references[0]?.sourceId;
@@ -78,6 +79,7 @@ export class PlaybackService {
       selectedIndex: input.selectedIndex,
       contextType: input.contextType,
       contextRef: input.contextRef,
+      replaceQueueRevision:input.replaceQueueRevision,
     });
   }
 
@@ -85,6 +87,19 @@ export class PlaybackService {
     reason?: 'user' | 'ended';
   }): Promise<PlaybackCommandResult> {
     return this.repository.control(input);
+  }
+
+  public selectPlaylist(input:Parameters<PlaybackRepository['selectPlaylist']>[0]):Promise<PlaybackCommandResult> {
+    return this.repository.selectPlaylist(input);
+  }
+  public setRepeat(input:Parameters<PlaybackRepository['setRepeat']>[0]):Promise<PlaybackCommandResult> {
+    return this.repository.setRepeat(input);
+  }
+  public selectFavorites(input:Parameters<PlaybackRepository['selectFavorites']>[0]):Promise<PlaybackCommandResult> {
+    return this.repository.selectFavorites(input);
+  }
+  public editQueue(input:Parameters<PlaybackRepository['editQueue']>[0]):Promise<PlaybackCommandResult> {
+    return this.repository.editQueue(input);
   }
 
   public removeQueueItem(

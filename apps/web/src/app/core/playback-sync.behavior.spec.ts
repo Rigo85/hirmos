@@ -55,6 +55,90 @@ describe('PlaybackSyncService command consistency', () => {
     vi.useRealTimers();
   });
 
+  it('clears an absent current track even without the lease and never sends idle progress', async () => {
+    player.clear.mockClear();
+    receive({ ...current, revision: 2, status: 'stopped', currentQueueItemId: null, playbackInstanceId: null });
+    await flush(); expect(player.clear).toHaveBeenCalledOnce();
+    await (service as unknown as { publishState(): Promise<void> }).publishState();
+    expect(socket.emit.mock.calls.filter(([event]) => event === 'playback:update')).toHaveLength(0);
+  });
+
+  it('starts the first pending prepared entry without rebuilding or replaying previous entries', async () => {
+    const queue = ['previous', 'first', 'second'].map(id => ({ id, trackRef: id })) as PlaybackSnapshot['queue'];
+    receive({ ...current, revision: 2, status: 'stopped', currentQueueItemId: null, playbackInstanceId: null, queue, queuePastCount: 1 });
+    await flush();
+    const pending = service.toggle(); await flush();
+    const edits = socket.emit.mock.calls.filter(([event]) => event === 'playback:queue-edit');
+    expect(edits).toHaveLength(1);
+    expect(edits[0][1]).toMatchObject({ expectedRevision: 2, operation: { action: 'select', itemId: 'first' } });
+    edits[0][2]({ status: 'accepted', snapshot: service.snapshot() }); await pending;
+    expect(controls()).toHaveLength(0);
+    receive({ ...service.snapshot()!, revision: 3, queuePastCount: queue.length });
+    await service.toggle(); expect(socket.emit.mock.calls.filter(([e]) => e === 'playback:queue-edit')).toHaveLength(1);
+  });
+
+  it('does not reload a removed track when metadata arrives late', async () => {
+    const metadata = new Subject<Track>();
+    vi.mocked(TestBed.inject(HttpClient).get).mockReturnValue(metadata);
+    receive({ ...current, revision: 2, currentTrackRef: 'late', activeDeviceId: '11111111-1111-4111-8111-111111111111' });
+    await flush();
+    receive({ ...current, revision: 3, status: 'stopped', currentQueueItemId: null, playbackInstanceId: null });
+    metadata.next({ ...track, id: 'late' }); metadata.complete(); await flush();
+    expect(player.load).not.toHaveBeenCalled(); expect(player.resume).not.toHaveBeenCalled();
+  });
+
+  it('aligns a stopped selection to zero without publishing paused or its previous position', async () => {
+    (service as unknown as { tracks: Map<string, Track> }).tracks.set(track.id, track);
+    player.positionSeconds.set(1.65);
+    receive({ ...current, revision: 2, currentTrackRef: track.id, status: 'stopped', renderPhase: 'paused',
+      activeDeviceId: '11111111-1111-4111-8111-111111111111' });
+    await flush(); expect(player.seek).toHaveBeenCalledWith(0);
+    await (service as unknown as { publishState(): Promise<void> }).publishState();
+    expect(socket.emit.mock.calls.filter(([event]) => event === 'playback:update')).toHaveLength(0);
+  });
+
+  it('does not retarget a row play/pause after the current occurrence changes while queued', async()=>{
+    const blocker=service.next();await flush();
+    const rowToggle=service.toggle(current.currentQueueItemId!);
+    const changed={...current,revision:2,currentQueueItemId:'22222222-2222-4222-8222-222222222222',playbackInstanceId:'33333333-3333-4333-8333-333333333333'};
+    controls()[0][2]({status:'accepted',snapshot:changed});
+    await blocker;await rowToggle;await flush();
+    expect(controls()).toHaveLength(1);
+    await service.toggle(current.currentQueueItemId!);expect(controls()).toHaveLength(1);
+  });
+
+  it('keeps queue edits frozen across ack retry and never rebases a stale destination', async()=>{
+    const operation={action:'add' as const,placement:'queue' as const,trackRefs:['track']};
+    const pending=service.editQueue(operation);await flush();
+    const edits=()=>socket.emit.mock.calls.filter(([event])=>event==='playback:queue-edit');
+    const frozen=structuredClone(edits()[0][1]);
+    receive({...current,revision:8,queueRevision:5});await vi.advanceTimersByTimeAsync(6001);
+    expect(edits()).toHaveLength(2);expect(edits()[1][1]).toEqual(frozen);
+    edits()[1][2]({status:'conflict',snapshot:{...current,revision:8,queueRevision:5},error:{code:'QUEUE_CHANGED',message:'La cola cambió.'}});
+    expect(await pending).toBe(false);expect(edits()).toHaveLength(2);expect(player.resume).not.toHaveBeenCalled();
+  });
+
+  it('applies compact progress only to its known queue, otherwise requests one full sync', async()=>{
+    const update=socket.on.mock.calls.find(([event])=>event==='playback:state')![1];
+    const {queue,...state}=current;
+    update({...state,revision:2,positionMs:3000});await flush();
+    expect(service.snapshot()?.queue).toBe(queue);expect(service.snapshot()?.positionMs).toBe(3000);
+    socket.emit.mockClear();update({...state,revision:3,queueRevision:9,positionMs:6000});update({...state,revision:4,queueRevision:9,positionMs:7000});
+    expect(service.snapshot()?.positionMs).toBe(3000);
+    expect(socket.emit.mock.calls.filter(([name])=>name==='playback:sync')).toHaveLength(1);
+    receive({...current,revision:5,queueRevision:9});update({...state,revision:6,queueRevision:9,positionMs:9000});
+    expect(service.snapshot()?.positionMs).toBe(9000);
+  });
+
+  it('asks before replacing manually edited continuation and freezes the confirmed queue revision',async()=>{
+    const pending=service.selectContext([track],0,'album','album');await flush();
+    const selects=()=>socket.emit.mock.calls.filter(([event])=>event==='playback:select-context');
+    selects()[0][2]({status:'conflict',snapshot:{...current,revision:2,queueRevision:7},error:{code:'QUEUE_REPLACE_CONFIRMATION',message:'Confirmar'}});
+    await pending;expect(service.replacement()).not.toBeNull();expect(service.error()).toBeNull();
+    const confirmed=service.replacement()!.replace();await flush();expect(selects()[1][1].replaceQueueRevision).toBe(7);
+    selects()[1][2]({status:'accepted',snapshot:{...current,revision:3,queueRevision:8}});await confirmed;
+  });
+
   it('retries the identical payload even if a newer broadcast arrives before the acknowledgement', async () => {
     const command = service.next();
     await flush();
@@ -108,6 +192,33 @@ describe('PlaybackSyncService command consistency', () => {
     receive({ ...local, revision: 2, currentQueueItemId: 'item-2', playbackInstanceId: 'run-2' });
     await flush();
     expect(player.seek).toHaveBeenCalledWith(0);
+  });
+
+  it('restarts repeat-one on a new execution of the same occurrence, but never on a mode change', async () => {
+    (service as unknown as { tracks: Map<string, Track> }).tracks.set(track.id, track);
+    const local = { ...current, currentTrackRef: track.id,
+      activeDeviceId: '11111111-1111-4111-8111-111111111111' };
+    receive(local);await flush();player.seek.mockClear();player.pause.mockClear();
+    receive({...local,revision:2,repeatMode:'one'});await flush();
+    expect(player.seek).not.toHaveBeenCalled();expect(player.pause).not.toHaveBeenCalled();
+    player.positionSeconds.set(180);
+    receive({...local,revision:3,repeatMode:'one',playbackInstanceId:'repeat-run',positionMs:0});await flush();
+    expect(player.seek).toHaveBeenCalledWith(0);
+  });
+
+  it('freezes a repeat request across ack retries and reflects a conflicting remote mode', async () => {
+    service.connected.set(true);
+    const pending=service.setRepeat('all');await flush();
+    const requests=()=>socket.emit.mock.calls.filter(([event])=>event==='playback:repeat');
+    const command=structuredClone(requests()[0][1]);
+    expect(service.repeatPending()).toBe(true);
+    await service.setRepeat('one');expect(requests()).toHaveLength(1);
+    receive({...current,revision:2,repeatMode:'one'});await vi.advanceTimersByTimeAsync(6001);
+    expect(requests()[1][1]).toEqual(command);
+    requests()[1][2]({status:'conflict',snapshot:{...current,revision:2,repeatMode:'one'},
+      error:{code:'REPEAT_CHANGED',message:'La repetición cambió.'}});
+    await pending;expect(service.repeatPending()).toBe(false);expect(service.snapshot()?.repeatMode).toBe('one');
+    expect(requests()).toHaveLength(2);
   });
 
   it('does not let a heartbeat retry pick up a later audio position', async () => {
@@ -502,7 +613,7 @@ describe('PlaybackSyncService command consistency', () => {
 });
 
 function snapshot(): PlaybackSnapshot {
-  return { protocolVersion: 3, attempt: 0, renderPhase: 'unknown', failures: [], recoveryDeadline: null, sessionId: 'session', revision: 1, queueRevision: 1,
+  return { protocolVersion: 5, repeatMode: 'off', attempt: 0, renderPhase: 'unknown', failures: [], recoveryDeadline: null, sessionId: 'session', revision: 1, queueRevision: 1,
     playbackInstanceId: 'run-1', currentQueueItemId: 'item-1', currentTrackRef: null,
     status: 'playing', positionMs: 0, positionObservedAt: new Date().toISOString(),
     activeDeviceId: 'remote', leaseEpoch: 1,
@@ -512,7 +623,7 @@ const track = { id: 'track' } as Track;
 function makePlayer() {
   const player = { track: signal(track), playing: signal(true), positionSeconds: signal(0),
     durationSeconds: signal(180), requested: signal(true), phase: signal('playing'),
-    pause: vi.fn(), seek: vi.fn(), load: vi.fn(), setRecoveryDeadline: vi.fn(),
+    clear: vi.fn(), pause: vi.fn(), seek: vi.fn(), load: vi.fn(), setRecoveryDeadline: vi.fn(),
     resume: vi.fn(async (): Promise<void> => undefined),
     onEnded: vi.fn(), onPlaybackStarted: vi.fn(), onPlaybackFailed: vi.fn(), onRecoveryCheck: vi.fn(),
     onInteractionRequired: vi.fn(), waitForInteraction: vi.fn() };

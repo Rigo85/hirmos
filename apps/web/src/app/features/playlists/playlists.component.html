@@ -1,0 +1,65 @@
+<section class="content-frame playlists-page">
+  <p class="eyebrow">TU COLECCIÓN · PRIVADA</p>
+  @if(playlist();as p){
+    <a routerLink="/playlists">← Tus playlists</a>
+    <header class="playlist-heading"><div class="collage" aria-hidden="true">@for(cover of p.covers;track cover){<img [src]="cover" alt="">}@empty{<app-icon name="playlist" />}</div><div><h1>{{p.name}}</h1><p>{{p.description}}</p><p class="muted">{{p.count}} canciones · {{duration(p.durationMs)}}</p></div></header>
+    <div class="actions playback-actions" aria-label="Acciones de playlist">
+      <button class="primary-button" (click)="play()" [disabled]="!p.count || busy()"><app-icon name="play" /> Reproducir toda</button>
+      <button class="outline-button" (click)="play(null,true)" [disabled]="!p.count || busy()"><app-icon name="shuffle" /> Aleatorio</button>
+      <button class="outline-button" (click)="addToQueue()" [disabled]="!p.count||busy()" title="Añadir toda la playlist sin cambiar la canción actual"><app-icon name="queue" /> Añadir a cola</button>
+      <details #options class="playlist-options" (keydown.escape)="options.open=false; optionsSummary.focus()">
+        <summary #optionsSummary><app-icon name="more" /> Opciones</summary>
+        <div class="options-popover">
+          <button (click)="options.open=false; edit()" [disabled]="busy()">Editar datos</button>
+          <button (click)="options.open=false; duplicate()" [disabled]="busy()">Duplicar playlist</button>
+          <button class="danger-action" (click)="options.open=false; deleting.set(true)" [disabled]="busy()">Eliminar playlist</button>
+        </div>
+      </details>
+    </div>
+  }@else{<h1>Tus playlists</h1><p class="muted">Tu música, organizada a tu manera. Hasta 5.000 canciones por lista.</p><button class="primary-button" (click)="edit()">Crear playlist</button>}
+  @if(error()){<p class="form-error" role="alert">{{error()}} <button class="outline-button" (click)="load()" [disabled]="busy()">Actualizar</button></p>}
+  @if(message()){<p role="status">{{message()}}</p>}
+  @if(editing()){
+    <form class="playlist-form" (ngSubmit)="save()">
+      <label>Nombre<input name="name" [(ngModel)]="name" required maxlength="120" [disabled]="busy()"></label>
+      <label>Descripción opcional<textarea name="description" [(ngModel)]="description" maxlength="2000" [disabled]="busy()"></textarea></label>
+      <div class="actions"><button class="primary-button" [disabled]="busy()||!name.trim()">Guardar</button><button type="button" class="outline-button" (click)="editing.set(false)" [disabled]="busy()">Cancelar</button></div>
+    </form>
+  }
+  @if(deleting()){
+    <div class="playlist-form" role="alert"><p>¿Eliminar «{{playlist()?.name}}»? No borra archivos, favoritos ni la cola activa.</p><div class="actions"><button class="outline-button" (click)="removePlaylist()" [disabled]="busy()">Sí, eliminar</button><button class="outline-button" (click)="deleting.set(false)" [disabled]="busy()">Cancelar</button></div></div>
+  }
+  @if(loading()){<p role="status">Cargando…</p>}
+  @if(playlist();as p){
+    <div class="playlist-toolbar">
+      <label class="filter"><app-icon name="search" /><input aria-label="Buscar en toda la playlist" type="search" maxlength="200" [ngModel]="filter()" (ngModelChange)="search($event)" placeholder="Buscar en esta playlist"></label>
+      <div class="selection-actions" aria-label="Acciones de selección">
+        @if(selected().size){
+          <span class="selection-count" role="status">{{selected().size}} {{selected().size===1?'seleccionada':'seleccionadas'}}</span>
+          <button class="quiet-action" (click)="moveDialog.showModal()" [disabled]="busy()">Mover…</button>
+          <button class="quiet-action" (click)="removeItems()" [disabled]="busy()">Quitar</button>
+          <button class="quiet-action" (click)="clearSelection()" [disabled]="busy()">Cancelar</button>
+        }@else{<span class="selection-hint">Selecciona canciones para organizarlas</span>}
+      </div>
+    </div>
+    @if(filter()){<p class="muted">El filtro solo cambia la vista. Reproducir toda conserva el orden de la playlist. Para arrastrar, limpia el filtro; también puedes elegir un destino explícito.</p>}
+    <dialog #moveDialog aria-labelledby="playlist-move-title">
+      <h2 id="playlist-move-title">Mover {{selected().size}} {{selected().size===1?'canción':'canciones'}}</h2>
+      <p class="muted">Conservaremos su orden relativo. Los destinos mostrados son las canciones cargadas.</p>
+      <label>Mover antes de<select [(ngModel)]="moveTarget"><option value="">Final de toda la playlist</option>@for(item of items();track item.id){@if(!selected().has(item.id)){<option [value]="item.id">{{item.ordinal+1}} · {{item.track.title}}</option>}}</select></label>
+      <div class="actions"><button class="primary-button" (click)="confirmMove(moveDialog)" [disabled]="busy()||!selected().size">Mover</button><button class="outline-button" (click)="moveDialog.close()">Cancelar</button></div>
+      @if(error()){<p role="alert">{{error()}}</p>}
+    </dialog>
+    <div class="list-heading"><input type="checkbox" [checked]="allVisibleSelected()" [indeterminate]="selected().size>0&&!allVisibleSelected()" (change)="toggleVisible()" aria-label="Seleccionar canciones visibles"><span>Canción</span><span>Duración</span></div>
+    <ol class="playlist-items">@for(item of filtered();track item.id){
+      <li [class.playlist-current]="item.id===currentItemId()" [class.playlist-selected]="selected().has(item.id)" [attr.aria-current]="item.id===currentItemId()?'true':null" [draggable]="!filter()&&!busy()" (dragstart)="dragStart($event,item.id)" (dragover)="$event.preventDefault()" (drop)="drop($event,item.id)">
+        <input type="checkbox" [checked]="selected().has(item.id)" (change)="toggle(item.id)" [attr.aria-label]="'Seleccionar '+item.track.title">
+        <button class="icon-button" (click)="play(item.id)" [disabled]="item.availability!=='available'" [attr.aria-label]="(playing(item.id)?'Pausar ':'Reproducir ')+item.track.title"><app-icon [name]="playing(item.id)?'pause':'play'" /></button>
+        <span class="ordinal">{{item.ordinal+1}}</span><div class="track-copy"><strong>{{item.track.title}}</strong><div>@if(item.track.artistId){<a [routerLink]="['/artists',item.track.artistId]">{{item.track.artist}}</a>}@else{<span>{{item.track.artist}}</span>} · @if(item.track.albumId){<a [routerLink]="['/albums',item.track.albumId]">{{item.track.album}}</a>}@else{<span>{{item.track.album}}</span>}</div>@if(item.id===currentItemId()){<small>{{playing(item.id)?'En reproducción':'Actual · en pausa'}} · conserva la cola</small>}@if(item.availability!=='available'){<small>{{availability(item)}}</small>}</div><time>{{duration(item.track.durationMs)}}</time>
+      </li>
+    }@empty{<li class="muted">{{filter()?'Sin coincidencias en esta playlist.':'Todavía no hay canciones. Añádelas desde la biblioteca.'}}</li>}</ol>
+    @if(nextOffset()!==null){<button class="outline-button" (click)="load(nextOffset()!)" [disabled]="loading()">Cargar más · {{items().length}} de {{p.count}}</button>}
+  }@else if(!loading()){
+    <div class="playlist-grid">@for(list of lists();track list.id){<a class="playlist-card" [routerLink]="['/playlists',list.id]"><div class="collage">@for(cover of list.covers;track cover){<img [src]="cover" alt="" loading="lazy">}@empty{<app-icon name="playlist" />}</div><h2>{{list.name}}</h2><p>{{list.count}} canciones · {{duration(list.durationMs)}}</p></a>}@empty{<p class="muted">Crea tu primera playlist. Favoritos sigue en su apartado.</p>}</div>
+  }
+</section>

@@ -89,6 +89,7 @@ export class AudioPlayerService {
       if (this.requested()) this.phase.set('loading');
     });
     this.audio.addEventListener('loadedmetadata', () => {
+      if (!this.track()) return;
       this.durationSeconds.set(Number.isFinite(this.audio.duration) ? this.audio.duration : 0);
       this.applyPendingSeek();
     });
@@ -103,6 +104,7 @@ export class AudioPlayerService {
     this.audio.addEventListener('stalled', () => this.markBuffering());
     this.audio.addEventListener('pause', () => {
       this.playing.set(false);
+      if (!this.track()) return;
       if (!this.requested() && !['error', 'awaiting_interaction'].includes(this.phase())) this.phase.set('paused');
     });
     this.audio.addEventListener('ended', () => {
@@ -117,6 +119,7 @@ export class AudioPlayerService {
     });
     this.audio.addEventListener('timeupdate', () => this.observeProgress());
     this.audio.addEventListener('durationchange', () => {
+      if (!this.track()) return;
       this.durationSeconds.set(Number.isFinite(this.audio.duration) ? this.audio.duration : 0);
     });
     this.audio.addEventListener('error', () => {
@@ -176,7 +179,35 @@ export class AudioPlayerService {
     if (this.phase() !== 'error') this.phase.set('paused');
   }
 
+  /** Release a removed selection, including in-flight play/recovery work. */
+  public clear(): void {
+    const hadTrack = this.track() !== null;
+    this.sourceGeneration += 1;
+    this.pause();
+    this.track.set(null);
+    this.pendingSeek = null;
+    this.requestId = null;
+    this.recoveryDeadline = null;
+    this.observedDeadline = null;
+    this.recoveryAttempts = 0;
+    this.totalRecoveryAttempts = 0;
+    this.sourceAttempt = 0;
+    this.episodeStartedAt = 0;
+    this.stableSince = 0;
+    this.lastProgressAt = 0;
+    this.lastObservedPosition = 0;
+    this.positionSeconds.set(0);
+    this.durationSeconds.set(0);
+    this.error.set(null);
+    this.phase.set('idle');
+    if (hadTrack) {
+      this.audio.removeAttribute('src');
+      this.audio.load();
+    }
+  }
+
   public seek(seconds: number): void {
+    if (!this.track()) return;
     const position = Math.max(0, seconds);
     this.positionSeconds.set(position);
     this.lastObservedPosition = position;
@@ -303,6 +334,7 @@ export class AudioPlayerService {
   }
 
   private observeProgress(): void {
+    if (!this.track()) return;
     // Replacing src can emit timeupdate at zero before metadata restores the
     // pending seek. That reset is not the listener's last heard position.
     if (this.pendingSeek !== null && this.audio.readyState === 0) return;

@@ -123,7 +123,8 @@ async function project(db: Database, userId: string, fact: Transition, at: Date)
   if (instance && (ended || left)) {
     const closed = await db.query<{ started: boolean; technical_interruption: boolean }>(`UPDATE playback_activity_instances SET closed = true
       WHERE id = $1 AND user_id = $2 AND NOT closed RETURNING started,technical_interruption`, [instance, userId]);
-    if (closed.rows[0]?.started && !closed.rows[0].technical_interruption) {
+    if (closed.rows[0]?.started && !closed.rows[0].technical_interruption
+      && !(fact.name==='queue-edit' && fact.action!=='select') && fact.name!=='queue-remove') {
       await event(ended ? 'completed' : 'skipped', ended ? progress : before);
     }
   } else if (instance && fact.name === 'control' && ['play', 'pause', 'seek'].includes(fact.action ?? '')) {

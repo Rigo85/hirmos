@@ -7,9 +7,13 @@ import { firstValueFrom } from 'rxjs';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { AppIconComponent } from '../../shared/app-icon.component';
 import { TrackRowComponent } from '../../shared/track-row.component';
+import { PlaylistsService } from '../../core/playlists.service';
+import { QueueMenuService } from '../../core/queue-menu.service';
 
 @Component({ selector: 'app-album', imports: [RouterLink, AppIconComponent, TrackRowComponent], templateUrl: './album.component.html' })
 export class AlbumComponent {
+  protected readonly playlists=inject(PlaylistsService);
+  protected readonly queueMenu=inject(QueueMenuService);
   private readonly http = inject(HttpClient);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);

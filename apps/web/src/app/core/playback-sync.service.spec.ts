@@ -5,7 +5,7 @@ const snapshot: PlaybackSnapshot = {
   attempt: 0, renderPhase: 'unknown', failures: [], recoveryDeadline: null,
   sessionId: '4ea11bcb-89e1-4d37-818c-77a44514de67',
   revision: 1,
-  protocolVersion: 3,
+  protocolVersion: 5, repeatMode: 'off',
   queueRevision: 0,
   playbackInstanceId: null,
   status: 'playing',

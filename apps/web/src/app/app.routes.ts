@@ -44,6 +44,8 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./features/shell/player-shell.component').then((module) => module.PlayerShellComponent),
     children: [
+      { path:'playlists',loadComponent:()=>import('./features/playlists/playlists.component').then(m=>m.PlaylistsComponent) },
+      { path:'playlists/:id',loadComponent:()=>import('./features/playlists/playlists.component').then(m=>m.PlaylistsComponent) },
       {
         path: '',
         loadComponent: () =>

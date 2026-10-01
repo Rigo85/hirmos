@@ -7,11 +7,15 @@ import type {
   PlaybackFailure,
   PlaybackFailureNotice,
   PlaybackRenderPhase,
+  QueueEditCommand,
+  RepeatCommand,
 } from '@hirmos/contracts';
-import { nextQueueItem } from '@hirmos/domain';
+import { nextQueueItem, previousQueueItem } from '@hirmos/domain';
 import { createHash, randomUUID } from 'node:crypto';
+import { uniqueTracks } from '../music-source/unique-tracks.js';
 import type { Database } from '../db/database.js';
 import { encodeTrackReference } from '../music-source/track-reference.js';
+import { editQueue } from './queue-editor.js';
 
 const LEASE_SECONDS = 30;
 interface FailureState {
@@ -24,6 +28,7 @@ interface SnapshotRow {
   id: string;
   revision: string;
   status: PlaybackSnapshot['status'];
+  repeat_mode: 'none' | 'all' | 'one';
   current_queue_item_id: string | null;
   position_ms: number;
   position_observed_at: Date;
@@ -38,6 +43,9 @@ interface SnapshotRow {
   playback_attempt: number;
   render_phase: PlaybackRenderPhase;
   failure_state: FailureState;
+  queue_manually_edited: boolean;
+  queue_past_count: number;
+  queue_undo: { id:string; expiresAt:string; revision:number; current:string|null; instance:string|null } | null;
 }
 
 interface QueueRow {
@@ -46,6 +54,10 @@ interface QueueRow {
   remote_track_id: string;
   ordinal: string;
   origin: string;
+  priority: boolean;
+  playlist_item_id: string | null;
+  context_type: string | null;
+  context_ref: string | null;
 }
 
 export class PlaybackRepository {
@@ -86,16 +98,19 @@ export class PlaybackRepository {
       [userId],
     );
     const sessionResult = await this.db.query<SnapshotRow>(
-        `SELECT s.id, s.revision::text, s.status, s.current_queue_item_id,
+        `SELECT s.id, s.revision::text, s.status, s.repeat_mode, s.current_queue_item_id,
                 s.position_ms, s.position_observed_at, s.active_device_id,
                 s.lease_epoch::text, s.lease_expires_at,
                 s.queue_revision::text, s.playback_instance_id,
                 s.playback_attempt, s.render_phase, s.failure_state,
+                s.queue_manually_edited,s.queue_past_count,s.queue_undo,
                 q.source_id, q.remote_track_id,
                 COALESCE((SELECT jsonb_agg(jsonb_build_object(
                   'id', items.id, 'source_id', items.source_id,
                   'remote_track_id', items.remote_track_id,
-                  'ordinal', items.ordinal::text, 'origin', items.origin
+                  'ordinal', items.ordinal::text, 'origin', items.origin,
+                  'priority',items.priority,'playlist_item_id',items.playlist_item_id,
+                  'context_type',items.context_type,'context_ref',items.context_ref
                 ) ORDER BY items.ordinal)
                   FROM queue_items items
                  WHERE items.playback_session_id = s.id AND items.removed_at IS NULL
@@ -157,6 +172,67 @@ export class PlaybackRepository {
     return this.commandResult(input.userId, input.commandId, Boolean(result.rowCount));
   }
 
+  public async selectPlaylist(input: {
+    userId:string; deviceId:string; commandId:string; expectedRevision:number;
+    playlistId:string; playlistRevision:number; itemId:string|null; shuffle:boolean;
+    replaceQueueRevision?:number;
+  }):Promise<PlaybackCommandResult> {
+    if (!this.insideCommand) return this.command('select-playlist',input,repo=>repo.selectPlaylist(input));
+    const row=(await this.db.query<{revision:number; items:{id:string;source:string;track:string;available:boolean;unknown:boolean}[]}>(`
+      SELECT p.revision,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',i.id,'source',i.source_id,
+        'track',i.remote_track_id,'available',s.enabled AND c.remote_track_id IS NOT NULL AND c.missing_since IS NULL,
+        'unknown',NOT s.enabled OR c.remote_track_id IS NULL)
+        ORDER BY i.ordinal) FROM playlist_items i JOIN music_sources s ON s.id=i.source_id
+        LEFT JOIN catalog_tracks c ON c.source_id=i.source_id AND c.remote_track_id=i.remote_track_id
+        WHERE i.playlist_id=p.id),'[]'::jsonb) AS items
+      FROM playlists p WHERE p.id=$1 AND p.user_id=$2 AND p.deleted_at IS NULL`,[input.playlistId,input.userId])).rows[0];
+    const conflict=(message:string):PlaybackCommandResult=>({status:'conflict',snapshot:before,error:{code:'PLAYLIST_NOT_READY',message}});
+    const before=await this.snapshot(input.userId);
+    if (!row || row.revision!==input.playlistRevision) return conflict('La playlist cambió o ya no está disponible. Actualízala.');
+    if (row.items.some(i=>i.unknown)) return conflict('No pudimos confirmar toda la playlist. Se conservó la cola actual.');
+    const items=uniqueTracks(row.items.filter(i=>i.available),i=>encodeTrackReference(i.source,i.track));
+    if (!items.length) return conflict('La playlist no tiene pistas disponibles. Se conservó la cola actual.');
+    const selected = input.itemId ? row.items.find(i=>i.id===input.itemId && i.available) : null;
+    if (input.itemId && !selected) return conflict('La pista elegida no está disponible.');
+    if (items.some(i=>i.source!==items[0]!.source)) return conflict('Esta reproducción requiere una misma fuente activa.');
+    if (input.shuffle) for(let i=items.length-1;i>0;i--) {
+      const j=Math.floor(Math.random()*(i+1)); [items[i],items[j]]=[items[j]!,items[i]!];
+    }
+    const result=await this.selectContext({...input,sourceId:items[0]!.source,remoteTrackIds:items.map(i=>i.track),
+      selectedIndex:selected ? items.findIndex(i=>i.source===selected.source && i.track===selected.track) : 0,contextType:'playlist',contextRef:input.playlistId});
+    const missing=row.items.filter(i=>!i.available).length;
+    const repeated=row.items.length-missing-items.length;
+    if (result.status==='accepted') {
+      await this.db.query(`UPDATE queue_items q SET playlist_item_id=t.item
+        FROM jsonb_to_recordset($1::jsonb) AS t(id uuid,item uuid) WHERE q.id=t.id`,
+        [JSON.stringify(result.snapshot.queue.map((q,n)=>({id:q.id,item:items[n]!.id})))]);
+      result.snapshot=await this.snapshot(input.userId);
+    }
+    if(result.status==='accepted' && (missing || repeated)) result.notice=[missing ? `Se omitieron ${missing} canciones que ya no están en la biblioteca. Se conservan en la playlist.` : '',repeated ? `${repeated} repetidas omitidas.` : ''].filter(Boolean).join(' ');
+    return result;
+  }
+
+  public async selectFavorites(input:{userId:string;deviceId:string;commandId:string;expectedRevision:number;shuffle:boolean;trackRef:string|null;replaceQueueRevision?:number}):Promise<PlaybackCommandResult> {
+    if(!this.insideCommand)return this.command('select-favorites',input,repo=>repo.selectFavorites(input));
+    const before=await this.snapshot(input.userId);
+    const reject=(message:string):PlaybackCommandResult=>({status:'conflict',snapshot:before,error:{code:'FAVORITES_NOT_READY',message}});
+    const rows=(await this.db.query<{source_id:string;remote_entity_id:string;enabled:boolean;known:boolean;missing:boolean}>(`
+      SELECT f.source_id,f.remote_entity_id,s.enabled,c.remote_track_id IS NOT NULL AS known,c.missing_since IS NOT NULL AS missing
+      FROM user_favorites f JOIN music_sources s ON s.id=f.source_id
+      LEFT JOIN catalog_tracks c ON c.source_id=f.source_id AND c.remote_track_id=f.remote_entity_id
+      WHERE f.user_id=$1 AND f.entity_type='track' ORDER BY f.created_at DESC,f.source_id,f.remote_entity_id LIMIT 5001`,[input.userId])).rows;
+    if(rows.length>5000)return reject('Favoritos supera las 5.000 canciones permitidas en una cola. No se reprodujo una lista parcial.');
+    if(rows.some(i=>!i.enabled||!i.known))return reject('No pudimos confirmar todos tus favoritos. Conservamos la cola anterior.');
+    const tracks=rows.filter(i=>!i.missing);
+    if(!tracks.length)return reject('No hay favoritos disponibles. Conservamos la cola anterior.');
+    if(input.shuffle)for(let i=tracks.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[tracks[i],tracks[j]]=[tracks[j]!,tracks[i]!];}
+    const selectedIndex=input.trackRef?tracks.findIndex(i=>encodeTrackReference(i.source_id,i.remote_entity_id)===input.trackRef):0;
+    if(selectedIndex<0)return reject('Ese favorito ya no está disponible.');
+    const result=await this.selectContext({...input,sourceId:tracks[0]!.source_id,remoteTrackIds:tracks.map(i=>i.remote_entity_id),selectedIndex,contextType:'favorites',contextRef:'favorites'});
+    if(result.status==='accepted'&&rows.length>tracks.length)result.notice=`Se omitieron ${rows.length-tracks.length} favoritos ausentes; no se borraron de tu colección.`;
+    return result;
+  }
+
   public async select(input: {
     userId: string;
     deviceId: string;
@@ -167,6 +243,14 @@ export class PlaybackRepository {
   }): Promise<PlaybackCommandResult> {
     if (!this.insideCommand) return this.command('select', input, repo => repo.select(input));
     await this.ensureSession(input.userId);
+    const before = await this.snapshot(input.userId);
+    if (before.revision !== input.expectedRevision) return {status:'conflict',snapshot:before};
+    const existing = before.queue.find(i=>i.trackRef===encodeTrackReference(input.sourceId,input.remoteTrackId));
+    if (existing) return this.editQueue({...input,expectedQueueRevision:before.queueRevision,
+      currentQueueItemId:before.currentQueueItemId,playbackInstanceId:before.playbackInstanceId,
+      expectedStatus:before.status,operation:{action:'select',itemId:existing.id}});
+    if (before.queue.length>=5000) return {status:'conflict',snapshot:before,
+      error:{code:'QUEUE_LIMIT',message:'La cola admite 5.000 canciones. No se añadió otra.'}};
     const result = await this.db.query(
       `WITH candidate AS (
          SELECT s.id, s.active_device_id, s.lease_epoch, s.lease_expires_at
@@ -292,8 +376,15 @@ export class PlaybackRepository {
     selectedIndex: number;
     contextType: string;
     contextRef: string | null;
+    replaceQueueRevision?:number;
   }): Promise<PlaybackCommandResult> {
     if (!this.insideCommand) return this.command('select-context', input, repo => repo.selectContext(input));
+    if(!input.remoteTrackIds.length || input.remoteTrackIds.length>5000 || input.selectedIndex<0 || input.selectedIndex>=input.remoteTrackIds.length) {
+      return {status:'conflict',snapshot:await this.snapshot(input.userId),error:{code:'QUEUE_LIMIT',message:'El contexto debe tener entre 1 y 5.000 canciones; no se reprodujo una lista parcial.'}};
+    }
+    const selectedTrack=input.remoteTrackIds[input.selectedIndex]!;
+    const remoteTrackIds=uniqueTracks(input.remoteTrackIds,id=>id);
+    input={...input,remoteTrackIds,selectedIndex:remoteTrackIds.indexOf(selectedTrack)};
     await this.ensureSession(input.userId);
     const result = await this.db.query(
       `WITH candidate AS (
@@ -317,6 +408,7 @@ export class PlaybackRepository {
          UPDATE queue_items SET removed_at = statement_timestamp()
           WHERE playback_session_id IN (SELECT playback_session_id FROM accepted)
             AND removed_at IS NULL
+         RETURNING id
        ), inserted AS (
          INSERT INTO queue_items
            (playback_session_id, source_id, remote_track_id, ordinal, origin,
@@ -328,6 +420,7 @@ export class PlaybackRepository {
                   + songs.ordinality - 1,
                 'context', $8, $9
            FROM accepted
+           CROSS JOIN (SELECT count(*) FROM removed) AS removal_barrier
            CROSS JOIN unnest($6::text[]) WITH ORDINALITY songs(remote_track_id, ordinality)
          RETURNING id, playback_session_id, ordinal
        ), target AS (
@@ -368,6 +461,22 @@ export class PlaybackRepository {
        input.contextRef],
     );
     return this.commandResult(input.userId, input.commandId, Boolean(result.rowCount));
+  }
+
+  public async setRepeat(input: RepeatCommand & { userId: string; deviceId: string }): Promise<PlaybackCommandResult> {
+    if (!this.insideCommand) return this.command('repeat', input, repo => repo.setRepeat(input));
+    const before = await this.snapshot(input.userId);
+    // Progress may advance the session revision; changing context or mode must
+    // never silently rebase a toggle made from an older view.
+    if (input.expectedRevision > before.revision || input.expectedQueueRevision !== before.queueRevision
+      || input.expectedRepeatMode !== before.repeatMode) {
+      return { status: 'conflict', snapshot: before, error: {
+        code: 'REPEAT_CHANGED', message: 'La cola o la repetición cambió. Revisa el modo actual.',
+      } };
+    }
+    await this.db.query(`UPDATE playback_sessions SET repeat_mode=$2,revision=revision+1,
+      updated_at=statement_timestamp() WHERE user_id=$1`, [input.userId, input.mode === 'off' ? 'none' : input.mode]);
+    return { status: 'accepted', snapshot: await this.snapshot(input.userId) };
   }
 
   public async control(input: {
@@ -481,14 +590,10 @@ export class PlaybackRepository {
          RETURNING playback_session_id
        ), replacement AS (
          SELECT CASE WHEN c.current_queue_item_id = $5 THEN
-           COALESCE(
              (SELECT q.id FROM queue_items q WHERE q.playback_session_id = c.id
                 AND q.removed_at IS NULL AND q.ordinal > c.removed_ordinal
-                ORDER BY q.ordinal LIMIT 1),
-             (SELECT q.id FROM queue_items q WHERE q.playback_session_id = c.id
-                AND q.removed_at IS NULL AND q.ordinal < c.removed_ordinal
-                ORDER BY q.ordinal DESC LIMIT 1)
-           ) ELSE c.current_queue_item_id END AS item_id,
+                ORDER BY q.ordinal LIMIT 1)
+            ELSE c.current_queue_item_id END AS item_id,
            c.id, c.current_queue_item_id = $5 AS removed_current
            FROM candidate c WHERE EXISTS (SELECT 1 FROM accepted)
        ), updated AS (
@@ -513,6 +618,11 @@ export class PlaybackRepository {
     return this.commandResult(input.userId, input.commandId, Boolean(result.rowCount));
   }
 
+  public async editQueue(input: QueueEditCommand & {userId:string;deviceId:string}):Promise<PlaybackCommandResult> {
+    if (!this.insideCommand) return this.command('queue-edit',input,repo=>repo.editQueue(input));
+    return editQueue(this.db,input,await this.snapshot(input.userId),()=>this.snapshot(input.userId));
+  }
+
   public async failure(input: {
     userId: string; deviceId: string; commandId: string; expectedRevision: number;
     anchor: PlaybackAnchor; failure: PlaybackFailure;
@@ -533,7 +643,7 @@ export class PlaybackRepository {
     const limited = state.consecutive >= 3 || Date.now() - state.since >= 30_000;
     const paused = before.status === 'paused';
     const target = !paused && !blocked && !limited ? nextQueueItem(before.queue, before.currentQueueItemId,
-      { omitted: state.omitted, failed: true }) : null;
+      { omitted: state.omitted, failed: true, repeat: before.repeatMode }) : null;
     const notice: PlaybackFailureNotice = { ...input.failure, id: input.commandId,
       trackRef: before.currentTrackRef, occurredAt: new Date().toISOString(),
       outcome: target ? 'advanced' : blocked ? 'blocked' : paused ? 'paused' : limited ? 'limit' : 'end' };
@@ -557,13 +667,16 @@ export class PlaybackRepository {
     direction: 'next' | 'previous',
   ): Promise<PlaybackCommandResult> {
     await this.ensureSession(input.userId);
-    const operator = direction === 'next' ? '>' : '<';
-    const order = direction === 'next' ? 'ASC' : 'DESC';
     const before = await this.snapshot(input.userId);
     const state = (await this.db.query<{failure_state: FailureState}>(
       'SELECT failure_state FROM playback_sessions WHERE user_id=$1',[input.userId])).rows[0]!.failure_state;
+    const positionMs = input.deviceId === before.activeDeviceId && input.positionMs !== undefined
+      ? input.positionMs : before.positionMs + (before.status === 'playing' && before.renderPhase === 'playing'
+        ? Math.max(0, Date.now() - Date.parse(before.positionObservedAt)) : 0);
     const next = direction === 'next' ? nextQueueItem(before.queue,before.currentQueueItemId,
-      {omitted: state.omitted}) : null;
+      {omitted: state.omitted, repeat: before.repeatMode === 'one' && input.reason !== 'ended' ? 'off' : before.repeatMode})
+      : previousQueueItem(before.queue,before.currentQueueItemId,
+        {omitted: state.omitted, repeat: before.repeatMode, positionMs});
     const result = await this.db.query(
       `WITH candidate AS (
          SELECT s.*, current.ordinal AS current_ordinal
@@ -575,11 +688,7 @@ export class PlaybackRepository {
           FOR UPDATE OF s
        ), target AS (
          SELECT candidate.id AS session_id,
-                CASE WHEN $5 = 'next' THEN $6::uuid ELSE (SELECT q.id FROM queue_items q
-                  WHERE q.playback_session_id = candidate.id
-                    AND q.removed_at IS NULL
-                    AND q.ordinal ${operator} candidate.current_ordinal
-                  ORDER BY q.ordinal ${order} LIMIT 1) END AS item_id
+                $6::uuid AS item_id
            FROM candidate
        ), accepted AS (
          INSERT INTO playback_events
@@ -616,6 +725,7 @@ export class PlaybackRepository {
     anchor?: PlaybackAnchor; reason?: 'user' | 'ended'; action?: string;
     positionMs?: number;
     failure?: PlaybackFailure; renderPhase?: PlaybackRenderPhase; status?: PlaybackSnapshot['status'];
+    replaceQueueRevision?:number; operation?:QueueEditCommand['operation'];
   }>(name: PlaybackCommandName, input: T,
     apply: (repository: PlaybackRepository) => Promise<PlaybackCommandResult>,
   ): Promise<PlaybackCommandResult> {
@@ -645,6 +755,13 @@ export class PlaybackRepository {
               code: 'COMMAND_ID_REUSED', message: 'El identificador ya pertenece a otro comando.',
             } };
       }
+      const replacing=name==='select-context' || name==='select-playlist' || name==='select-favorites';
+      if (replacing && ((input.replaceQueueRevision!==undefined && input.replaceQueueRevision!==before.queueRevision)
+        || (before.queueManuallyEdited && before.queue.length>(before.currentQueueItemId ? before.queue.findIndex(i=>i.id===before.currentQueueItemId)+1 : before.queuePastCount??0)
+        && input.replaceQueueRevision!==before.queueRevision))) {
+        return {status:'conflict',snapshot:before,error:{code:'QUEUE_REPLACE_CONFIRMATION',
+          message:'La cola tiene cambios manuales. Confirma si quieres reemplazarla.'}};
+      }
       if ((name === 'control' || name === 'update' || name === 'failure') && (!input.anchor
         || input.anchor.currentQueueItemId !== before.currentQueueItemId
         || input.anchor.playbackInstanceId !== before.playbackInstanceId
@@ -653,6 +770,11 @@ export class PlaybackRepository {
         return { status: 'conflict', snapshot: before };
       }
       if ((name === 'failure' || name === 'update') && ['error', 'blocked'].includes(before.renderPhase)) {
+        return { status: 'conflict', snapshot: before };
+      }
+      // A stopped execution cannot be revived by a delayed renderer report,
+      // even if its queue item and execution anchor have not changed.
+      if (name === 'update' && (before.status === 'stopped' || !before.currentTrackRef)) {
         return { status: 'conflict', snapshot: before };
       }
       // Permission waiting is a paused render state, not a failure/retry episode.
@@ -690,9 +812,21 @@ export class PlaybackRepository {
       }
       const result = await apply(repository);
       if (result.status !== 'accepted') return result;
+      if (name==='select-context' || name==='select-playlist' || name==='select-favorites') {
+        await db.query(`UPDATE playback_sessions SET queue_manually_edited=false,queue_past_count=0,queue_undo=NULL,repeat_mode='none' WHERE user_id=$1`,[input.userId]);
+        result.snapshot=await repository.snapshot(input.userId);
+      }
+      if (before.currentQueueItemId!==result.snapshot.currentQueueItemId) {
+        await db.query(`UPDATE queue_items SET priority=false WHERE playback_session_id=$1 AND priority
+          AND ordinal<=(SELECT ordinal FROM queue_items WHERE id=$2)`,[before.sessionId,result.snapshot.currentQueueItemId]);
+        result.snapshot=await repository.snapshot(input.userId);
+      }
       const after = result.snapshot;
       const changedItem = before.currentQueueItemId !== after.currentQueueItemId
-        || (name === 'control' && input.action === 'play' && before.status === 'stopped');
+        || name==='select'
+        || (name==='queue-edit' && input.operation?.action==='select')
+        || (name === 'control' && ['play','previous'].includes(input.action ?? '') && before.status === 'stopped')
+        || (name === 'control' && input.action === 'next' && after.status === 'playing');
       const changedQueue = JSON.stringify(before.queue) !== JSON.stringify(after.queue);
       if (changedItem || changedQueue) {
         await db.query(`UPDATE playback_sessions
@@ -707,7 +841,8 @@ export class PlaybackRepository {
       let phase = result.snapshot.renderPhase;
       let attempt = result.snapshot.attempt;
       if (changedItem) { attempt = 0; phase = after.status === 'playing' ? 'loading' : 'paused'; state.healthySince = undefined; }
-      if (name === 'select' || name === 'select-context' || name === 'claim'
+      if (name === 'select' || name === 'select-context' || name === 'select-playlist' || name==='select-favorites' || name === 'claim'
+        || (name==='queue-edit' && input.operation?.action==='select')
         || (name === 'control' && (input.action === 'retry' || (input.action === 'play' && changedItem)))) {
         state.consecutive = 0; state.since = undefined; state.omitted = []; state.healthySince = undefined;
       }
@@ -718,6 +853,9 @@ export class PlaybackRepository {
         attempt += 1;
         phase = after.status === 'playing' ? 'loading' : 'paused';
         state.healthySince = undefined;
+      }
+      if (name === 'control' && input.action === 'previous' && !changedItem && after.status === 'playing') {
+        attempt += 1; phase = 'loading'; state.healthySince = undefined;
       }
       const resumeClaim = name === 'claim' && before.renderPhase === 'awaiting_interaction';
       if (name === 'claim') { attempt += 1; phase = resumeClaim || after.status === 'playing' ? 'loading' : 'paused'; }
@@ -752,7 +890,7 @@ export class PlaybackRepository {
         VALUES ($1, $2, $3)`, [input.userId, input.commandId, requestHash]);
       await db.query(`INSERT INTO playback_activity_outbox (user_id, command_id, payload)
         VALUES ($1, $2, $3::jsonb)`, [input.userId, input.commandId, JSON.stringify({
-          name, deviceId: input.deviceId, action: input.action, reason: input.reason,
+          name, deviceId: input.deviceId, action: input.action ?? input.operation?.action, reason: input.reason,
           reportedPositionMs: input.failure?.positionMs ?? input.positionMs,
           // Queue metadata is not needed to project listening events.
           before: { ...before, queue: [] }, after: { ...result.snapshot, queue: [] },
@@ -795,8 +933,11 @@ function mapSnapshot(row: SnapshotRow, queueRows: QueueRow[]): PlaybackSnapshot 
     trackRef: encodeTrackReference(item.source_id, item.remote_track_id),
     ordinal: Number(item.ordinal),
     origin: item.origin,
+    priority:item.priority,playlistItemId:item.playlist_item_id,
+    contextType:item.context_type,contextRef:item.context_ref,
   }));
   return {
+    repeatMode: row.repeat_mode === 'none' ? 'off' : row.repeat_mode,
     attempt: row.playback_attempt ?? 0,
     renderPhase: row.render_phase ?? 'unknown',
     failures: (row.failure_state?.notices ?? []).filter(notice => notice.code !== 'autoplay'),
@@ -804,8 +945,13 @@ function mapSnapshot(row: SnapshotRow, queueRows: QueueRow[]): PlaybackSnapshot 
       : new Date(row.failure_state.since + 30_000).toISOString(),
     sessionId: row.id,
     revision: Number(row.revision),
-    protocolVersion: 3,
+    protocolVersion: 5,
     queueRevision: Number(row.queue_revision),
+    queueManuallyEdited:row.queue_manually_edited,
+    queuePastCount:row.current_queue_item_id ? 0 : row.queue_past_count,
+    queueUndo:row.queue_undo && row.queue_undo.revision===Number(row.queue_revision)
+      && row.queue_undo.current===row.current_queue_item_id && row.queue_undo.instance===row.playback_instance_id
+      && Date.parse(row.queue_undo.expiresAt)>Date.now() ? {id:row.queue_undo.id,expiresAt:row.queue_undo.expiresAt}:null,
     playbackInstanceId: row.playback_instance_id,
     status: row.status,
     currentQueueItemId: row.current_queue_item_id,

@@ -9,11 +9,16 @@ import type {
   PlaybackClientDiagnostic,
   PlaybackCommandName,
   PlaybackCommandResult,
+  PlaybackWireResult,
+  PlaybackWireSnapshot,
   PlaybackSnapshot,
   ResolveTracksResponse,
   ServerToClientEvents,
   Track,
   MusicLookupFailure,
+  QueueOperation,
+  QueuePlacement,
+  RepeatMode,
 } from '@hirmos/contracts';
 import { PLAYBACK_PROTOCOL_VERSION } from '@hirmos/contracts/playback-protocol';
 import { io, type Socket } from 'socket.io-client';
@@ -39,6 +44,7 @@ export class PlaybackSyncService {
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private leaseExpiry: ReturnType<typeof setTimeout> | null = null;
   private reconcileSequence = 0;
+  private compactResyncRequested=false;
   private publishInFlight = false;
   private readonly commands = new PlaybackCommandSequencer();
   private appliedAnchor: PlaybackAnchor | null = null;
@@ -71,6 +77,9 @@ export class PlaybackSyncService {
   private readonly snapshotFresh = signal(false);
   private readonly terminalSocketStop = signal(false);
   readonly error = signal<string | null>(null);
+  readonly notice = signal<string | null>(null);
+  readonly repeatPending = signal(false);
+  readonly replacement = signal<{replace:()=>Promise<void>;add?:(()=>Promise<void>)}|null>(null);
   readonly queueTracks = signal<Record<string, Track>>({});
 
   public constructor() {
@@ -135,7 +144,8 @@ export class PlaybackSyncService {
       if (error.code === 'UNAUTHENTICATED') this.authenticationRequired.set(true);
       this.error.set(error.message);
     });
-    this.socket.on('playback:snapshot', (snapshot) => this.receive(snapshot));
+    this.socket.on('playback:snapshot', (snapshot) => {this.compactResyncRequested=false;this.receive(snapshot);});
+    this.socket.on('playback:state',state=>{const snapshot=this.expandSnapshot(state);if(snapshot)this.receive(snapshot);});
     this.player.onEnded(() => {
       if (this.ownsLease() && this.appliedAnchor) {
         this.pendingEndInstance = this.appliedAnchor.playbackInstanceId;
@@ -216,6 +226,7 @@ export class PlaybackSyncService {
     selectedIndex: number,
     contextType: 'album' | 'artist' | 'search' | 'home' | 'genre' | 'favorites',
     contextRef: string | null,
+    replaceQueueRevision?:number,
   ): Promise<void> {
     if (!tracks.length || selectedIndex < 0 || selectedIndex >= tracks.length) return;
     tracks.forEach((track) => this.remember(track));
@@ -227,7 +238,14 @@ export class PlaybackSyncService {
     await this.issue('select-context', (revision, commandId, ack) => this.socket.emit('playback:select-context', {
       commandId, expectedRevision: revision,
       trackRefs, selectedIndex, contextType, contextRef,
-    }, ack));
+      replaceQueueRevision,
+    }, result=>{
+      if(result.error?.code==='QUEUE_REPLACE_CONFIRMATION') this.replacement.set({
+        replace:()=>this.selectContext(tracks,selectedIndex,contextType,contextRef,result.snapshot.queueRevision),
+        add:()=>this.addTracks(tracks,'queue'),
+      });
+      ack(result);
+    }));
   }
 
   public async claimHere(): Promise<void> {
@@ -239,12 +257,70 @@ export class PlaybackSyncService {
     }, ack));
   }
 
-  public async toggle(): Promise<void> {
+  public async selectPlaylist(playlistId:string, playlistRevision:number, itemId:string|null=null, shuffle=false,replaceQueueRevision?:number):Promise<void> {
+    if (!this.snapshot() || this.terminalSocketStop()) { this.error.set('El hilo todavía se está conectando.'); return; }
+    await this.issue('select-playlist',(revision,commandId,ack)=>this.socket.emit('playback:select-playlist',{
+      commandId,expectedRevision:revision,playlistId,playlistRevision,itemId,shuffle,replaceQueueRevision,
+    },result=>{
+      if(result.error?.code==='QUEUE_REPLACE_CONFIRMATION') this.replacement.set({
+        replace:()=>this.selectPlaylist(playlistId,playlistRevision,itemId,shuffle,result.snapshot.queueRevision),
+        add:async()=>{await this.editQueue({action:'add-playlist',placement:'queue',playlistId,playlistRevision});},
+      });
+      ack(result);
+    }));
+  }
+
+  public async addTracks(tracks:Track[],placement:QueuePlacement):Promise<void> {
+    tracks.forEach(t=>this.remember(t));
+    await this.editQueue({action:'add',trackRefs:tracks.map(t=>t.id),placement});
+  }
+
+  public async selectFavorites(shuffle=false,trackRef:string|null=null,replaceQueueRevision?:number):Promise<void> {
+    await this.issue('select-favorites',(revision,commandId,ack)=>this.socket.emit('playback:select-favorites',{
+      commandId,expectedRevision:revision,shuffle,trackRef,replaceQueueRevision,
+    },result=>{
+      if(result.error?.code==='QUEUE_REPLACE_CONFIRMATION')this.replacement.set({replace:()=>this.selectFavorites(shuffle,trackRef,result.snapshot.queueRevision)});
+      ack(result);
+    }));
+  }
+
+  public async editQueue(operation:QueueOperation,basis:PlaybackSnapshot|null=this.snapshot()):Promise<boolean> {
+    if(!basis || this.terminalSocketStop()){this.error.set('El hilo todavía se está conectando.');return false;}
+    const command={commandId:crypto.randomUUID(),expectedRevision:basis.revision,
+      expectedQueueRevision:basis.queueRevision,currentQueueItemId:basis.currentQueueItemId,
+      playbackInstanceId:basis.playbackInstanceId,expectedStatus:basis.status,operation};
+    return this.commands.run(async()=>{
+      const result=await this.sendCommand('queue-edit',command.commandId,ack=>this.socket.emit('playback:queue-edit',command,ack),true);
+      return Boolean(result && !result.error && result.status!=='conflict');
+    });
+  }
+
+  public async setRepeat(mode: RepeatMode): Promise<void> {
+    const basis = this.snapshot();
+    if (!basis || !this.connected() || this.terminalSocketStop() || this.repeatPending()) return;
+    const command = { commandId: crypto.randomUUID(), expectedRevision: basis.revision,
+      expectedQueueRevision: basis.queueRevision, expectedRepeatMode: basis.repeatMode, mode };
+    this.repeatPending.set(true);
+    try {
+      await this.commands.run(() => this.sendCommand('repeat', command.commandId,
+        ack => this.socket.emit('playback:repeat', command, ack), true));
+    } finally { this.repeatPending.set(false); }
+  }
+
+  public async toggle(queueItemId?:string): Promise<void> {
     const snapshot = this.snapshot();
-    if (!snapshot?.currentTrackRef) return;
+    if (!snapshot) return;
+    if (!snapshot.currentTrackRef) {
+      // Select the existing first pending entry; never rebuild the context or
+      // silently replay previous entries when there are no pending tracks.
+      const first = snapshot.queue[snapshot.queuePastCount ?? 0];
+      if (queueItemId === undefined && first) await this.editQueue({ action: 'select', itemId: first.id }, snapshot);
+      return;
+    }
+    if(queueItemId!==undefined && snapshot.currentQueueItemId!==queueItemId)return;
     if (this.waitingForAudio()) return this.continueAudio();
     if (this.unconfirmedFailure() || ['error','blocked'].includes(snapshot.renderPhase)) return this.retryCurrent();
-    await this.control(snapshot.status === 'playing' ? 'pause' : 'play');
+    await this.control(snapshot.status === 'playing' ? 'pause' : 'play',undefined,'user',playbackAnchor(snapshot));
   }
 
   public async continueAudio(): Promise<void> {
@@ -401,7 +477,9 @@ export class PlaybackSyncService {
   }
 
   public previous(): Promise<void> {
-    return this.control('previous');
+    const snapshot = this.snapshot();
+    return this.control('previous', this.ownsLease() ? Math.round(this.player.positionSeconds() * 1_000) : undefined,
+      'user', snapshot ? playbackAnchor(snapshot) : undefined);
   }
 
   public seek(seconds: number): Promise<void> {
@@ -409,13 +487,7 @@ export class PlaybackSyncService {
   }
 
   public async removeQueueItem(queueItemId: string): Promise<void> {
-    const snapshot = this.snapshot();
-    if (!snapshot) return;
-    await this.issue('queue-remove', (revision, commandId, ack) => this.socket.emit('playback:queue-remove', {
-      commandId,
-      expectedRevision: revision,
-      queueItemId,
-    }, ack));
+    await this.editQueue({action:'remove',itemIds:[queueItemId]});
   }
 
   public trackFor(reference: string): Track | null {
@@ -423,6 +495,8 @@ export class PlaybackSyncService {
   }
 
   public disconnect(): void {
+    this.notice.set(null);
+    this.replacement.set(null);
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     if (this.leaseExpiry) clearTimeout(this.leaseExpiry);
@@ -511,12 +585,15 @@ export class PlaybackSyncService {
   }
 
   private async reconcile(snapshot: PlaybackSnapshot, sequence: number): Promise<void> {
-    if (!this.ownsLease(snapshot)) {
-      this.continuation = null; this.continuingAudio.set(false); this.interactionAnchor = null;
-      this.player.pause();
+    if (!snapshot.currentTrackRef) {
+      this.continuation = null; this.continuingAudio.set(false);
+      this.interactionAnchor = null; this.permissionStillBlocked.set(false);
+      this.appliedAnchor = null; this.loadingAnchor = null;
+      this.player.clear();
       return;
     }
-    if (!snapshot.currentTrackRef) {
+    if (!this.ownsLease(snapshot)) {
+      this.continuation = null; this.continuingAudio.set(false); this.interactionAnchor = null;
       this.player.pause();
       return;
     }
@@ -569,7 +646,7 @@ export class PlaybackSyncService {
     const expectedSeconds = changedTarget || changedTrack ? snapshot.positionMs/1_000 : estimatedPositionSeconds(snapshot);
     // Starting close to zero should not force a Range restart while metadata is
     // still arriving. Transfers and genuine drift still seek immediately.
-    if ((changedInstance && !changedTrack) || (changedTrack && expectedSeconds > 0)
+    if (snapshot.status === 'stopped' || (changedInstance && !changedTrack) || (changedTrack && expectedSeconds > 0)
       || (!changedTrack && Math.abs(this.player.positionSeconds() - expectedSeconds) > 2)) {
       this.player.seek(expectedSeconds);
     }
@@ -615,7 +692,8 @@ export class PlaybackSyncService {
 
   private async publishStateNow(): Promise<void> {
     const snapshot = this.snapshot();
-    if (!snapshot || this.continuation || !this.ownsLease(snapshot) || !this.socket.connected
+    if (!snapshot || snapshot.status === 'stopped' || !snapshot.currentTrackRef
+      || this.continuation || !this.ownsLease(snapshot) || !this.socket.connected
       || this.terminalAnchor || this.pendingEndInstance || !this.appliedAnchor
       || !samePlaybackAnchor(this.appliedAnchor, playbackAnchor(snapshot))) return;
     // Loading is not evidence of either playback or pause. Wait for actual
@@ -643,7 +721,7 @@ export class PlaybackSyncService {
     emit: (
       revision: number,
       commandId: string,
-      ack: (result: PlaybackCommandResult) => void,
+      ack: (result: PlaybackWireResult) => void,
       basis: PlaybackSnapshot,
     ) => void,
     targetAnchor?: PlaybackAnchor,
@@ -675,10 +753,10 @@ export class PlaybackSyncService {
   private async sendCommand(
     command: PlaybackCommandName,
     commandId: string,
-    emit: (ack: (result: PlaybackCommandResult) => void) => void,
+    emit: (ack: (result: PlaybackWireResult) => void) => void,
     interactive: boolean,
   ): Promise<PlaybackCommandResult | null> {
-    const result = await deliverWithAckRetry(emit, {
+    const wireResult = await deliverWithAckRetry(emit, {
       attempts: 2,
       ackTimeoutMs: 6_000,
       waitUntilReady: (timeoutMs) => this.waitUntilSocketReady(timeoutMs),
@@ -686,7 +764,7 @@ export class PlaybackSyncService {
         kind: 'ack_timeout', command, commandId, elapsedMs,
       }),
     });
-    if (!result) {
+    if (!wireResult) {
       if (interactive) {
         this.error.set('No pudimos confirmar el comando. Reconectando el hilo…');
         if (this.socket.connected) {
@@ -696,17 +774,38 @@ export class PlaybackSyncService {
       }
       return null;
     }
+    const expanded=this.expandSnapshot(wireResult.snapshot);
+    if(!expanded)return null;
+    const result:PlaybackCommandResult={...wireResult,snapshot:expanded};
     this.receive(result.snapshot);
+    if (interactive && result.notice) this.notice.set(result.notice);
     if (result.error?.code === 'RETRY_LATER') {
       // The server remains authoritative, including near the deadline or with
       // clock skew. Show a neutral short wait, never an overlapping error toast.
       this.refreshRetryWait(1_000);
+    } else if (result.error?.code==='QUEUE_REPLACE_CONFIRMATION') {
+      this.error.set(null);
     } else if (result.error) {
       this.error.set(result.error.message);
     } else if (result.status !== 'conflict') {
       this.error.set(null);
     }
     return result;
+  }
+
+  private expandSnapshot(state:PlaybackWireSnapshot):PlaybackSnapshot|null {
+    if(state.queue)return state as PlaybackSnapshot;
+    const current=this.snapshot();
+    if(current?.sessionId===state.sessionId) {
+      if(state.revision<current.revision)return current;
+      if(current.queueRevision===state.queueRevision)return {...state,queue:current.queue};
+    }
+    // Never attach a new position to an unknown queue. Ask for a complete
+    // coherent snapshot once, including after reconnect/missed edits.
+    if(!this.compactResyncRequested&&this.socket.connected){
+      this.compactResyncRequested=true;this.socket.emit('playback:sync',{lastRevision:current?.revision??null});
+    }
+    return null;
   }
 
   private waitUntilSocketReady(timeoutMs: number): Promise<boolean> {
@@ -764,7 +863,8 @@ export class PlaybackSyncService {
   }
 
   private async loadQueueTracks(snapshot: PlaybackSnapshot): Promise<void> {
-    const references = [snapshot.currentTrackRef, ...snapshot.queue.map((item) => item.trackRef)]
+    const index=Math.max(0,snapshot.queue.findIndex(i=>i.id===snapshot.currentQueueItemId));
+    const references = [snapshot.currentTrackRef, ...snapshot.queue.slice(Math.max(0,index-5),index+51).map((item) => item.trackRef)]
       .filter((reference): reference is string => Boolean(reference));
     const unique = [...new Set(references)];
     await this.loadTracks(unique);
@@ -777,7 +877,19 @@ export class PlaybackSyncService {
     ));
   }
 
+  public async ensureQueueTracks(references:string[]):Promise<void> {
+    await this.loadTracks([...new Set(references)]);
+    this.queueTracks.update(old=>({...old,...Object.fromEntries(references.flatMap(ref=>{
+      const track=this.tracks.get(ref);return track?[[ref,track]]:[];
+    }))}));
+  }
+
   private async loadTracks(references: string[]): Promise<void> {
+    // Respect the metadata endpoint's batch bound even for long playlists.
+    if (references.length > 500) {
+      for (let offset=0;offset<references.length;offset+=500) await this.loadTracks(references.slice(offset,offset+500));
+      return;
+    }
     const pending: Promise<Track | null>[] = [];
     const missing: string[] = [];
     for (const reference of references) {
@@ -883,7 +995,7 @@ export class PlaybackSyncService {
         : this.unconfirmedFailure() || ['error','blocked'].includes(this.snapshot()?.renderPhase ?? '') ? this.retryCurrent() : this.control('play')),
       pause: () => void this.control('pause'),
       next: () => void this.control('next'),
-      previous: () => void this.control('previous'),
+      previous: () => void this.previous(),
       seekTo: (seconds) => void this.seek(seconds),
       seekBy: (seconds) => {
         const duration = this.player.durationSeconds();

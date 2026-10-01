@@ -6,16 +6,16 @@ import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { FavoritesComponent } from './favorites.component';
 
 describe('FavoritesComponent', () => {
-  const selectContext = vi.fn();
+  const selectFavorites = vi.fn();
 
   beforeEach(async () => {
-    selectContext.mockReset();
+    selectFavorites.mockReset();
     await TestBed.configureTestingModule({
       imports: [FavoritesComponent],
       providers: [
         provideHttpClient(), provideHttpClientTesting(),
         { provide: PlaybackSyncService, useValue: {
-          snapshot: () => null, selectContext,
+          snapshot: () => null, selectFavorites,
         } },
       ],
     }).compileComponents();
@@ -32,10 +32,8 @@ describe('FavoritesComponent', () => {
     expect(fixture.nativeElement.querySelectorAll('.track-row')).toHaveLength(2);
     (fixture.nativeElement.querySelector('.primary-button') as HTMLButtonElement).click();
     await fixture.whenStable();
-    expect(selectContext).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.objectContaining({ id: 'one' })]),
-      0, 'favorites', 'favorites',
-    );
+    expect(selectFavorites).toHaveBeenCalledWith();
+    TestBed.inject(HttpTestingController).expectNone(request=>request.params.get('limit')==='500');
   });
 
   it('removes a track from the visible list after unmarking it', async () => {

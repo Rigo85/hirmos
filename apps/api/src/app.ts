@@ -17,6 +17,7 @@ import { registerHealthRoutes } from './routes/health-routes.js';
 import { registerMusicSourceRoutes } from './routes/music-source-routes.js';
 import type { CatalogSyncControl } from './cache/catalog-sync-coordinator.js';
 import type { TopSongsRefreshControl } from './cache/top-songs-repository.js';
+import { registerPlaylistRoutes } from './routes/playlist-routes.js';
 
 export interface BuildAppOptions {
   config: AppConfig;
@@ -111,6 +112,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   }
 
   await registerAccountRoutes(app, options.accountService, rateLimiter);
+  await registerPlaylistRoutes(app, options.database);
   await registerMusicSourceRoutes(
     app, options.musicSourceService, options.catalogSync, options.topSongsRefresh,
   );

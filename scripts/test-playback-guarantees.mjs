@@ -79,10 +79,10 @@ try {
     assert.equal(await repo.registerDevice({ userId, deviceId, name: 'Fixture', type: 'desktop' }), true);
   }
   let s = await repo.snapshot(user);
-  assert.equal(s.protocolVersion, 3);
+  assert.equal(s.protocolVersion, 5);
   assert.equal(s.playbackInstanceId, null);
   const select = { userId: user, deviceId: desktop, commandId: randomUUID(), expectedRevision: s.revision,
-    sourceId: source, remoteTrackIds: ['a', 'a', 'b'], selectedIndex: 0, contextType: 'album', contextRef: 'fixture' };
+    sourceId: source, remoteTrackIds: ['a', 'b', 'c'], selectedIndex: 0, contextType: 'album', contextRef: 'fixture' };
   const duplicate = await Promise.all([repo.selectContext(select), repo.selectContext(select)]);
   assert.deepEqual(duplicate.map(r => r.status).sort(), ['accepted', 'duplicate']);
   s = (await repo.snapshot(user));
@@ -110,9 +110,9 @@ try {
     action: 'next', reason: 'user', anchor: anchor(s) })).snapshot;
   assert.equal(s.activeDeviceId, desktop);
   assert.notEqual(s.playbackInstanceId, instanceA);
-  assert.equal(s.currentTrackRef, duplicate[0].snapshot.currentTrackRef);
+  assert.notEqual(s.currentTrackRef, duplicate[0].snapshot.currentTrackRef);
   assert.equal(s.queueRevision, 1);
-  check('consecutive copies of one track have different executions, same player and queue revision');
+  check('advancing has a different execution, same player and queue revision; same-track repetition is covered by test:repeat:pg');
   assert.equal((await repo.control({ userId: user, deviceId: desktop, commandId: randomUUID(),
     expectedRevision: s.revision, action: 'next', reason: 'ended', positionMs: 1_000, anchor: firstAnchor })).status, 'conflict');
   assert.equal((await repo.update({ ...progress, commandId: randomUUID(), expectedRevision: s.revision })).status, 'conflict');
@@ -175,11 +175,10 @@ try {
   const projector = new PlaybackActivityProjector(db, logger);
   await Promise.all([projector.runBatch(), new PlaybackActivityProjector(db, logger).runBatch()]);
   const stats = (await db.query('SELECT play_starts, listened_ms::int FROM user_track_stats WHERE user_id=$1', [user])).rows;
-  assert.equal(stats.length, 1);
-  assert.equal(stats[0].play_starts, 2);
-  assert.equal(stats[0].listened_ms, 1_000);
+  assert.equal(stats.length, 2);
+  assert.ok(stats.every(row=>row.play_starts===1 && row.listened_ms===500));
   assert.equal(await projector.runBatch(), 0);
-  check('durable replay is idempotent; two copies count twice, seek contributes no listening time');
+  check('durable replay is idempotent; two tracks count once each, seek contributes no listening time');
 
   s = (await repo.selectContext({ ...select, commandId: randomUUID(),
     expectedRevision: (await repo.snapshot(user)).revision, remoteTrackIds: ['short'] })).snapshot;
@@ -230,6 +229,7 @@ async function failureChecks(repo, db, projector, {user,desktop,phone,source}) {
     assert.equal(result.status,'accepted'); s=result.snapshot;
   };
   await begin(['failed-a','failed-a','healthy-b','failed-c','healthy-d']);
+  assert.equal(s.queue.length,4);
   const a = s.currentTrackRef, instance = s.playbackInstanceId, order = structuredClone(s.queue);
   const command = fault('decode',750);
   const failingDb={...db,transaction:run=>db.transaction(connection=>run({...connection,
@@ -246,14 +246,14 @@ async function failureChecks(repo, db, projector, {user,desktop,phone,source}) {
   const deliveries = await Promise.all([repo.failure(command),repo.failure(command)]);
   assert.deepEqual(deliveries.map(r=>r.status).sort(),['accepted','duplicate']);
   s = await repo.snapshot(user);
-  assert.equal(s.currentQueueItemId,order[2].id);
+  assert.equal(s.currentQueueItemId,order[1].id);
   assert.deepEqual(s.queue,order);
   assert.equal(s.failures.at(-1).outcome,'advanced');
   assert.ok(Date.parse(s.recoveryDeadline) > Date.now());
   assert.ok(Date.parse(s.recoveryDeadline) <= Date.now() + 30_000);
   assert.equal((await db.query('SELECT count(*)::int AS n FROM playback_failures WHERE id=$1',[command.commandId])).rows[0].n,1);
   assert.equal((await repo.failure({...command,commandId:randomUUID(),expectedRevision:s.revision})).status,'conflict');
-  check('one isolated failure advances atomically once, skips duplicate recording, preserves queue and rejects stale/remote reports');
+  check('one isolated failure advances atomically once in deduplicated order, preserves queue and rejects stale/remote reports');
   while (await projector.runBatch()) { /* drain bounded batches */ }
   const stats = (await db.query(`SELECT play_starts,completions,skips,listened_ms::int FROM user_track_stats
     WHERE user_id=$1 AND remote_track_id='failed-a'`,[user])).rows[0];
@@ -265,7 +265,7 @@ async function failureChecks(repo, db, projector, {user,desktop,phone,source}) {
   assert.equal(s.status,'paused');
   assert.equal(s.renderPhase,'error');
   assert.equal(s.failures.at(-1).outcome,'limit');
-  assert.equal(s.currentQueueItemId,order[3].id);
+  assert.equal(s.currentQueueItemId,order[2].id);
   const stoppedAnchor=anchor(s), stoppedInstance=s.playbackInstanceId;
   await control('pause');
   assert.equal(s.renderPhase,'error');
@@ -443,8 +443,10 @@ async function socketChecks(service, user, other, foreignDevice) {
     await rejected(client(user, undefined), 'Playback client update required');
     await rejected(client(user, 2), 'Playback client update required');
     await rejected(client('not-authenticated', 2), 'Authentication required');
-    await rejected(client(user, 3, foreignDevice), 'Device unavailable');
-    const socket = client(user, 3);
+    await rejected(client(user, 3), 'Playback client update required');
+    await rejected(client(user, 4), 'Playback client update required');
+    await rejected(client(user, 5, foreignDevice), 'Device unavailable');
+    const socket = client(user, 5);
     const initial = new Promise(resolve => socket.once('playback:snapshot', resolve));
     socket.connect();
     const s = await timed(initial);
@@ -461,6 +463,33 @@ async function socketChecks(service, user, other, foreignDevice) {
     }, resolve)));
     assert.equal(paused.status, 'accepted');
     assert.equal(paused.snapshot.activeDeviceId, s.activeDeviceId);
+    const claimed=await timed(new Promise(resolve=>socket.emit('playback:claim',{
+      commandId:randomUUID(),expectedRevision:paused.snapshot.revision,
+    },resolve)));
+    assert.equal(claimed.status,'accepted');
+    const stateEvent=timed(new Promise(resolve=>socket.once('playback:state',resolve)));
+    const progress=await timed(new Promise(resolve=>socket.emit('playback:update',{
+      commandId:randomUUID(),expectedRevision:claimed.snapshot.revision,anchor:anchor(claimed.snapshot),
+      leaseEpoch:claimed.snapshot.leaseEpoch,status:'paused',renderPhase:'paused',positionMs:claimed.snapshot.positionMs,
+    },resolve)));
+    assert.equal(progress.status,'accepted');assert.equal('queue' in progress.snapshot,false);
+    const state=await stateEvent;assert.equal('queue' in state,false);assert.equal(state.queueRevision,claimed.snapshot.queueRevision);
+    const full=timed(new Promise(resolve=>socket.once('playback:snapshot',resolve)));
+    socket.emit('playback:sync',{lastRevision:state.revision});assert.ok(Array.isArray((await full).queue));
+    const remote=client(user,5);
+    const remoteInitial=timed(new Promise(resolve=>remote.once('playback:snapshot',resolve)));
+    remote.connect();const remoteBefore=await remoteInitial;
+    const ownerBroadcast=timed(new Promise(resolve=>socket.once('playback:snapshot',resolve)));
+    const repetition=await timed(new Promise(resolve=>remote.emit('playback:repeat',{
+      commandId:randomUUID(),expectedRevision:remoteBefore.revision,
+      expectedQueueRevision:remoteBefore.queueRevision,expectedRepeatMode:remoteBefore.repeatMode,mode:'all',
+      userId:other,deviceId:foreignDevice,
+    },resolve)));
+    assert.equal(repetition.status,'accepted');assert.equal(repetition.snapshot.repeatMode,'all');
+    assert.equal(repetition.snapshot.activeDeviceId,remoteBefore.activeDeviceId);
+    assert.equal(repetition.snapshot.playbackInstanceId,remoteBefore.playbackInstanceId);
+    assert.equal(repetition.snapshot.positionMs,remoteBefore.positionMs);
+    assert.equal((await ownerBroadcast).repeatMode,'all');
   } finally {
     clients.forEach(socket => socket.disconnect());
     await new Promise(resolve => io.close(resolve));

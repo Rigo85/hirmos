@@ -35,7 +35,9 @@ describe('PlayerShellComponent', () => {
         {
           provide: PlaybackSyncService,
           useValue: {
-            snapshot: signal(null), connected: signal(true), error: signal(null),
+            snapshot: signal(null), connected: signal(true), error: signal(null), notice: signal(null), replacement:signal(null),
+            ensureQueueTracks:vi.fn(),editQueue:vi.fn(),
+            repeatPending:signal(false),setRepeat:vi.fn(),
             unconfirmedFailure: signal(null), authenticationRequired: signal(false),
             waitingForAudio: signal(false),
             retryWaitSeconds: signal(0),
@@ -69,6 +71,30 @@ describe('PlayerShellComponent', () => {
     fixture.detectChanges();
     expect(button.getAttribute('aria-label')).toBe('Activar sonido en este dispositivo');
     expect(button.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('hides stale local audio when empty, but enables Play for a prepared queue', () => {
+    const player = TestBed.inject(AudioPlayerService);
+    (player.track as WritableSignal<unknown>).set({ id: 'old', title: 'Removed track', durationMs: 180_000 });
+    player.positionSeconds.set(46);
+    const playback = TestBed.inject(PlaybackSyncService);
+    const state = { currentTrackRef: null, currentQueueItemId: null, status: 'stopped', positionMs: 0,
+      queue: [] as { id: string; trackRef: string }[], queuePastCount: 0 };
+    (playback.snapshot as WritableSignal<unknown>).set(state);
+    const fixture = TestBed.createComponent(PlayerShellComponent); fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelector('.player-track')?.textContent).not.toContain('Removed track');
+    expect(root.querySelector<HTMLButtonElement>('.player-play')!.disabled).toBe(true);
+    expect(root.querySelector<HTMLInputElement>('[aria-label="Posición"]')!.disabled).toBe(true);
+    expect(root.querySelector('.progress time')?.textContent).toBe('0:00');
+    expect(root.querySelector<HTMLButtonElement>('[aria-label="Mostrar letra"]')!.disabled).toBe(true);
+    (playback.snapshot as WritableSignal<unknown>).set({ ...state, queue: [{ id: 'first', trackRef: 'new' }] });
+    fixture.detectChanges();
+    expect(root.querySelector('.player-track')?.textContent).toContain('Cola preparada');
+    const play = root.querySelector<HTMLButtonElement>('.player-play')!;
+    expect(play.disabled).toBe(false); play.click(); expect(playback.toggle).toHaveBeenCalledOnce();
+    (playback.snapshot as WritableSignal<unknown>).set({ ...state, queue: [{ id: 'past', trackRef: 'old' }], queuePastCount: 1 });
+    fixture.detectChanges(); expect(play.disabled).toBe(true);
   });
 
   it('keeps cooldown visible by playback controls without an error toast, including mobile', () => {
@@ -153,7 +179,8 @@ describe('PlayerShellComponent', () => {
       id: 'track-mobile', title: 'Silent Lucidity', artist: 'Queensrÿche',
       artistId: null, album: 'Empire', albumId: null, durationMs: 120_000, coverUrl: null,
     });
-    playback.snapshot.set({ currentTrackRef: null, positionMs: 30_000, status: 'paused' });
+    playback.snapshot.set({ currentTrackRef: 'track-mobile', positionMs: 30_000, status: 'paused', queue: [] });
+    vi.mocked(TestBed.inject(PlaybackSyncService).trackFor).mockReturnValue(TestBed.inject(AudioPlayerService).track());
     playback.currentPositionSeconds.mockReturnValue(30);
     const historyBack = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
     const fixture = TestBed.createComponent(PlayerShellComponent);
@@ -198,9 +225,8 @@ describe('PlayerShellComponent', () => {
     (fixture.nativeElement.querySelector('.mobile-player-open') as HTMLButtonElement).click();
     fixture.detectChanges();
 
-    const lyricsButton = fixture.nativeElement.querySelector(
-      '.mobile-now-playing__actions button:first-child',
-    ) as HTMLButtonElement;
+    const lyricsButton = [...fixture.nativeElement.querySelectorAll('.mobile-now-playing__actions button')]
+      .find((button: HTMLButtonElement) => button.textContent?.trim() === 'Letra') as HTMLButtonElement;
     lyricsButton.click();
     fixture.detectChanges();
 

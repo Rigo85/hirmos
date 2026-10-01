@@ -152,6 +152,9 @@ export const trackSchema = z.object({
   favorite: z.boolean(),
 });
 export type Track = z.infer<typeof trackSchema>;
+export * from './playlists.js';
+export interface PlaylistItem { id: string; ordinal: number; track: Track; originQueueItemId?: string | null; availability: 'available' | 'missing' | 'source_unavailable' | 'unknown' }
+export interface PlaylistPage { playlist: import('./playlists.js').PlaylistSummary; items: PlaylistItem[]; nextOffset: number | null }
 
 export const artistSchema = z.object({
   id: z.string(),
@@ -361,11 +364,16 @@ export const playbackAnchorSchema = z.object({
   leaseEpoch: z.number().int().nonnegative(),
 });
 export type PlaybackAnchor = z.infer<typeof playbackAnchorSchema>;
+export * from './queue.js';
 export const playbackQueueItemSchema = z.object({
   id: z.uuid(),
   trackRef: z.string(),
   ordinal: z.number().int(),
   origin: z.string(),
+  priority: z.boolean().optional(),
+  playlistItemId: z.uuid().nullable().optional(),
+  contextType: z.string().nullable().optional(),
+  contextRef: z.string().nullable().optional(),
 });
 export type PlaybackQueueItem = z.infer<typeof playbackQueueItemSchema>;
 export const playbackFailureCodeSchema = z.enum([
@@ -388,15 +396,28 @@ export const playbackFailureNoticeSchema = playbackFailureSchema.extend({
   outcome: z.enum(['advanced', 'blocked', 'limit', 'end', 'paused']),
 });
 export type PlaybackFailureNotice = z.infer<typeof playbackFailureNoticeSchema>;
+export const repeatModeSchema = z.enum(['off', 'all', 'one']);
+export type RepeatMode = z.infer<typeof repeatModeSchema>;
+export const repeatCommandSchema = z.object({
+  commandId: z.uuid(), expectedRevision: z.number().int().nonnegative(),
+  expectedQueueRevision: z.number().int().nonnegative(),
+  expectedRepeatMode: repeatModeSchema, mode: repeatModeSchema,
+});
+export type RepeatCommand = z.infer<typeof repeatCommandSchema>;
 export const playbackSnapshotSchema = z.object({
+  repeatMode: repeatModeSchema,
   attempt: z.number().int().nonnegative().default(0),
   renderPhase: playbackRenderPhaseSchema.default('unknown'),
   failures: z.array(playbackFailureNoticeSchema).default([]),
   recoveryDeadline: z.iso.datetime().nullable().default(null),
   sessionId: z.uuid(),
   revision: z.number().int().nonnegative(),
-  protocolVersion: z.literal(3),
+  protocolVersion: z.literal(5),
   queueRevision: z.number().int().nonnegative(),
+  queueManuallyEdited: z.boolean().optional(),
+  // Retain the past/future boundary when removing the last current occurrence.
+  queuePastCount: z.number().int().nonnegative().optional(),
+  queueUndo: z.object({ id: z.uuid(), expiresAt: z.iso.datetime() }).nullable().optional(),
   playbackInstanceId: z.uuid().nullable(),
   status: playbackStatusSchema,
   currentQueueItemId: z.uuid().nullable(),
@@ -415,11 +436,14 @@ export type PlaybackCommandResult = {
   status: z.infer<typeof playbackCommandStatusSchema>;
   snapshot: PlaybackSnapshot;
   error?: ApiError;
+  notice?: string;
 };
-export type PlaybackCommandAck = (result: PlaybackCommandResult) => void;
+export type PlaybackWireSnapshot = Omit<PlaybackSnapshot,'queue'> & { queue?: PlaybackQueueItem[] };
+export type PlaybackWireResult = Omit<PlaybackCommandResult,'snapshot'> & { snapshot:PlaybackWireSnapshot };
+export type PlaybackCommandAck = (result: PlaybackWireResult) => void;
 
 export const playbackCommandNameSchema = z.enum([
-  'claim', 'select', 'select-context', 'update', 'control', 'queue-remove', 'failure',
+  'claim', 'select', 'select-context', 'select-playlist', 'select-favorites', 'update', 'control', 'queue-remove', 'queue-edit', 'failure', 'repeat',
 ]);
 export type PlaybackCommandName = z.infer<typeof playbackCommandNameSchema>;
 export const playbackClientDiagnosticSchema = z.object({
@@ -433,11 +457,20 @@ export const playbackClientDiagnosticSchema = z.object({
 export type PlaybackClientDiagnostic = z.infer<typeof playbackClientDiagnosticSchema>;
 
 export interface ServerToClientEvents {
+  'playback:state': (snapshot: Omit<PlaybackSnapshot,'queue'>) => void;
   'playback:snapshot': (snapshot: PlaybackSnapshot) => void;
   'playback:error': (error: ApiError) => void;
 }
 
 export interface ClientToServerEvents {
+  'playback:repeat': (command: RepeatCommand, ack?: PlaybackCommandAck) => void;
+  'playback:select-favorites': (command:{commandId:string;expectedRevision:number;shuffle:boolean;trackRef:string|null;replaceQueueRevision?:number},ack?:PlaybackCommandAck)=>void;
+  'playback:queue-edit': (command: import('./queue.js').QueueEditCommand, ack?: PlaybackCommandAck) => void;
+  'playback:select-playlist': (command: {
+    commandId: string; expectedRevision: number; playlistId: string; playlistRevision: number;
+    itemId: string | null; shuffle: boolean;
+    replaceQueueRevision?: number;
+  }, ack?: PlaybackCommandAck) => void;
   'playback:failure': (command: {
     commandId: string; expectedRevision: number; anchor: PlaybackAnchor; failure: PlaybackFailure;
   }, ack?: PlaybackCommandAck) => void;
@@ -459,6 +492,7 @@ export interface ClientToServerEvents {
     selectedIndex: number;
     contextType: 'album' | 'artist' | 'search' | 'home' | 'genre' | 'favorites';
     contextRef: string | null;
+    replaceQueueRevision?: number;
   }, ack?: PlaybackCommandAck) => void;
   'playback:update': (command: {
     commandId: string;

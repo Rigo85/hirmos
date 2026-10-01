@@ -69,7 +69,7 @@ describe('PlaybackRepository contextual queues', () => {
         }
         if (text.includes('SELECT s.id, s.revision::text')) {
           return result([{
-            id: 'session', revision: '9', status: 'playing', queue_rows: [],
+            id: 'session', revision: selectionQuery ? '9' : '8', status: 'playing', queue_rows: [],
             queue_revision: '1', playback_instance_id: 'instance',
             current_queue_item_id: 'current', position_ms: 0,
             position_observed_at: new Date('2026-09-05T00:00:00Z'),

@@ -19,8 +19,13 @@ export type AppIconName =
   | 'play'
   | 'previous'
   | 'queue'
+  | 'playlist'
+  | 'plus'
+  | 'more'
   | 'search'
   | 'shuffle'
+  | 'repeat'
+  | 'repeat-one'
   | 'settings'
   | 'users'
   | 'volume'
@@ -31,6 +36,9 @@ export type AppIconName =
   template: `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       @switch (name()) {
+        @case ('repeat') { <path d="m17 2 4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4m14-1v2a3 3 0 0 1-3 3H3" /> }
+        @case ('repeat-one') { <path d="m17 2 4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4m14-1v2a3 3 0 0 1-3 3H3m7-7 2-1v4" /> }
+        @case ('more') { <circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/> }
         @case ('arrow-left') {
           <path d="m14.5 6-6 6 6 6" />
         }
@@ -87,6 +95,8 @@ export type AppIconName =
           <path d="M4 6.5h10M4 12h10M4 17.5h7" />
           <path class="icon-fill" d="m16 13.8 5 3.2-5 3.2z" />
         }
+        @case ('playlist') { <path d="M4 5h16M4 10h16M4 15h8M18 14v7m-3.5-3.5h7" /> }
+        @case ('plus') { <path d="M12 5v14M5 12h14" /> }
         @case ('shuffle') {
           <path d="M4 7h2.5c4.7 0 6.3 10 11 10H20" />
           <path d="m17 14 3 3-3 3M4 17h2.5c1.8 0 3.2-1.5 4.4-3.3M13.2 8.9C14.4 7.7 15.8 7 17.5 7H20" />

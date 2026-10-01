@@ -6,6 +6,7 @@ import { PlaybackSyncService } from '../core/playback-sync.service';
 import { FavoritesService } from '../core/favorites.service';
 import { AppIconComponent } from './app-icon.component';
 import { LazyCoverDirective } from './lazy-cover.directive';
+import { QueueMenuService } from '../core/queue-menu.service';
 
 @Component({
   selector: 'li[appTrackRow]',
@@ -41,6 +42,7 @@ import { LazyCoverDirective } from './lazy-cover.directive';
       </div>
     </div>
     <div class="track-row__trailing">
+      <button class="icon-button track-row__playlist" type="button" (click)="queueMenu.open([track()])" [attr.aria-label]="'Opciones para ' + track().title" title="Cola y playlists"><app-icon name="more" /></button>
       @if (trailingText()) { <time>{{ trailingText() }}</time> }
       @else if (showDuration()) { <time>{{ track().durationMs / 60000 | number:'1.0-0' }} min</time> }
       <button class="track-row__favorite" [class.track-row__favorite--active]="isFavorite()" type="button" (click)="toggleFavorite()" [disabled]="favorites.isPending(track().id)" [attr.aria-label]="isFavorite() ? 'Quitar ' + track().title + ' de favoritos' : 'Añadir ' + track().title + ' a favoritos'" [attr.aria-pressed]="isFavorite()"><app-icon [name]="isFavorite() ? 'heart-filled' : 'heart'" /></button>
@@ -48,6 +50,7 @@ import { LazyCoverDirective } from './lazy-cover.directive';
   `,
 })
 export class TrackRowComponent {
+  protected readonly queueMenu=inject(QueueMenuService);
   private readonly playback = inject(PlaybackSyncService);
   protected readonly favorites = inject(FavoritesService);
   public readonly track = input.required<Track>();

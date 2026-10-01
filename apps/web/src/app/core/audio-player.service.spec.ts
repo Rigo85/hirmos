@@ -51,6 +51,36 @@ describe('AudioPlayerService', () => {
     expect(storage.setItem).not.toHaveBeenCalled();
   });
 
+  it('clears removed audio and ignores late DOM events while preserving local volume', async () => {
+    await service.play(track);
+    service.setVolume(0.35); service.toggleMuted();
+    service.seek(46);
+    service.clear();
+    expect(audio.src).toBe('');
+    expect(audio.removeAttribute).toHaveBeenCalledWith('src');
+    audio.currentTime = 46;
+    for (const event of ['loadedmetadata', 'durationchange', 'timeupdate', 'pause', 'playing', 'ended']) {
+      audio.dispatchEvent(new Event(event));
+    }
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(service.track()).toBeNull(); expect(service.phase()).toBe('idle');
+    expect(service.positionSeconds()).toBe(0); expect(service.durationSeconds()).toBe(0);
+    expect(service.playing()).toBe(false); expect(service.requested()).toBe(false);
+    expect(service.volume()).toBe(0.35); expect(service.muted()).toBe(true);
+    const calls = audio.play.mock.calls.length;
+    await service.resume(); expect(audio.play).toHaveBeenCalledTimes(calls);
+    await service.play(track); expect(service.requested()).toBe(true);
+  });
+
+  it('ignores a rejected play promise after the selection was removed', async () => {
+    let reject!: (reason: unknown) => void;
+    audio.play.mockImplementationOnce(() => new Promise<void>((_, fail) => { reject = fail; }));
+    const pending = service.play(track);
+    service.clear(); reject(new DOMException('gone', 'NotAllowedError'));
+    await pending;
+    expect(service.phase()).toBe('idle'); expect(service.error()).toBeNull();
+  });
+
   it.each([0, 0.25, 1])('restores volume %s before loading audio', value => {
     service.setVolume(value);
     reloadPlayer();
@@ -452,6 +482,7 @@ describe('AudioPlayerService', () => {
 });
 
 class FakeAudio extends EventTarget {
+  readonly removeAttribute = vi.fn((name: string) => { if (name === 'src') this.src = ''; });
   preload = '';
   volume = 1;
   src = '';
