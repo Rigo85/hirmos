@@ -9,8 +9,9 @@ import { AppIconComponent } from '../../shared/app-icon.component';
 import { TrackRowComponent } from '../../shared/track-row.component';
 import { PlaylistsService } from '../../core/playlists.service';
 import { QueueMenuService } from '../../core/queue-menu.service';
+import { DownloadButtonComponent } from '../../shared/download-button.component';
 
-@Component({ selector: 'app-album', imports: [RouterLink, AppIconComponent, TrackRowComponent], templateUrl: './album.component.html' })
+@Component({ selector: 'app-album', imports: [RouterLink, AppIconComponent, TrackRowComponent, DownloadButtonComponent], templateUrl: './album.component.html' })
 export class AlbumComponent {
   protected readonly playlists=inject(PlaylistsService);
   protected readonly queueMenu=inject(QueueMenuService);

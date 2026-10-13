@@ -7,6 +7,7 @@ import { PlaybackSyncService } from '../core/playback-sync.service';
 import { AppIconComponent } from './app-icon.component';
 import { TrackRowComponent } from './track-row.component';
 import { FavoritesService } from '../core/favorites.service';
+import { DownloadsService } from '../offline/downloads.service';
 
 describe('TrackRowComponent', () => {
   const snapshot = signal<{ currentTrackRef: string | null; status: 'playing' | 'paused' }>({
@@ -29,6 +30,7 @@ describe('TrackRowComponent', () => {
       imports: [TrackRowComponent],
       providers: [
         provideRouter([]),
+        { provide: DownloadsService, useValue:{ready:()=>new Set()} },
         { provide: PlaybackSyncService, useValue: { snapshot, toggle } },
         { provide: FavoritesService, useValue: {
           isFavorite: () => favorite(), isPending: () => false, toggle: toggleFavorite,
@@ -62,6 +64,11 @@ describe('TrackRowComponent', () => {
     expect(fixture.nativeElement.querySelectorAll('.track-row__meta a')).toHaveLength(0);
     expect(fixture.nativeElement.querySelector('.track-row__meta').textContent.replace(/\s/g, ''))
       .toBe('Artista·Álbum');
+  });
+  it('keeps the download indicator outside the title/play button and in the trailing area',()=>{
+    const fixture=TestBed.createComponent(TrackRowComponent);fixture.componentRef.setInput('track',track());fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.track-row__title app-download-badge')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.track-row__trailing app-download-badge')).not.toBeNull();
   });
 
   it('highlights and pauses the current playing track instead of selecting it again', () => {

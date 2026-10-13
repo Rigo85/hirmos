@@ -36,18 +36,20 @@ export class LyricsObjectCache {
     const key = createHash('sha256').update([
       input.sourceId, input.remoteTrackId, input.provider, input.fingerprint,
     ].join('\0')).digest('hex');
-    const stored = await this.store.put(new TextEncoder().encode(raw.content));
-    await this.repository.put({
-      namespace: 'lyrics',
-      key,
-      sourceId: input.sourceId,
-      entityType: 'track',
-      remoteEntityId: input.remoteTrackId,
-      variant: `${input.provider}:${raw.parserVersion}`,
-      objectHash: stored.hash,
-      relativePath: stored.relativePath,
-      contentType: raw.contentType,
-      byteLength: stored.byteLength,
+    await this.repository.withObjectMutation(async (repository) => {
+      const stored = await this.store.put(new TextEncoder().encode(raw.content));
+      await repository.put({
+        namespace: 'lyrics',
+        key,
+        sourceId: input.sourceId,
+        entityType: 'track',
+        remoteEntityId: input.remoteTrackId,
+        variant: `${input.provider}:${raw.parserVersion}`,
+        objectHash: stored.hash,
+        relativePath: stored.relativePath,
+        contentType: raw.contentType,
+        byteLength: stored.byteLength,
+      });
     });
     return { key, parserVersion: raw.parserVersion };
   }

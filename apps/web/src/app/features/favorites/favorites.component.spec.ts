@@ -4,6 +4,10 @@ import { TestBed } from '@angular/core/testing';
 import type { Track } from '@hirmos/contracts';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { FavoritesComponent } from './favorites.component';
+import {SessionStore} from '../../core/session.store';
+import {signal} from '@angular/core';
+import {provideRouter} from '@angular/router';
+import {DownloadsService} from '../../offline/downloads.service';
 
 describe('FavoritesComponent', () => {
   const selectFavorites = vi.fn();
@@ -13,7 +17,8 @@ describe('FavoritesComponent', () => {
     await TestBed.configureTestingModule({
       imports: [FavoritesComponent],
       providers: [
-        provideHttpClient(), provideHttpClientTesting(),
+        provideHttpClient(), provideHttpClientTesting(), provideRouter([]),
+        {provide:SessionStore,useValue:{session:signal({user:{id:'synthetic'}}),localOwner:signal('synthetic'),canUseRemote:signal(true),requestGeneration:()=>0}},
         { provide: PlaybackSyncService, useValue: {
           snapshot: () => null, selectFavorites,
         } },
@@ -51,6 +56,19 @@ describe('FavoritesComponent', () => {
 
     expect(fixture.nativeElement.querySelectorAll('.track-row')).toHaveLength(0);
     expect(fixture.nativeElement.querySelector('.empty-state')).not.toBeNull();
+  });
+  it('offers whole-collection downloads separately from playback and visible-page navigation',async()=>{
+    const f=TestBed.createComponent(FavoritesComponent);f.detectChanges();
+    const http=TestBed.inject(HttpTestingController);
+    http.expectOne(r=>r.url==='/api/library/favorites').flush({tracks:[track('one')],nextCursor:'50'});
+    await f.whenStable();f.detectChanges();
+    const downloads=TestBed.inject(DownloadsService),enqueue=vi.spyOn(downloads,'enqueueFavorites').mockResolvedValue();
+    const button=f.nativeElement.querySelector('app-download-button button') as HTMLButtonElement;
+    expect(button.textContent).toContain('Descargar originales');button.click();await f.whenStable();f.detectChanges();
+    expect(enqueue).toHaveBeenCalledExactlyOnceWith();expect(selectFavorites).not.toHaveBeenCalled();
+    expect(f.nativeElement.textContent).toContain('no solo esta página');
+    expect(f.nativeElement.querySelector('app-download-button a').getAttribute('href')).toBe('/downloads');
+    http.expectNone(r=>r.url==='/api/library/favorites');
   });
 });
 

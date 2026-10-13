@@ -14,10 +14,13 @@ import { QueueActionsComponent } from '../../shared/queue-actions.component';
 import { QueueEditorComponent } from '../../shared/queue-editor.component';
 import { RepeatButtonComponent } from '../../shared/repeat-button.component';
 import { PlaybackNoticeComponent } from '../../shared/playback-notice.component';
+import { AccessStatusComponent } from '../../shared/access-status.component';
+import { PlayerBarComponent } from '../../shared/player-bar.component';
+import { NowPlayingComponent } from '../../shared/now-playing.component';
 
 @Component({
   selector: 'app-player-shell',
-  imports: [RouterLink, RouterLinkActive, RouterOutlet, AppIconComponent, LyricsPanelComponent, PlaybackFailuresComponent, AudioPermissionComponent, PlaylistPickerComponent, QueueActionsComponent, QueueEditorComponent, RepeatButtonComponent, PlaybackNoticeComponent],
+  imports: [PlayerBarComponent, NowPlayingComponent, AccessStatusComponent, RouterLink, RouterLinkActive, RouterOutlet, AppIconComponent, LyricsPanelComponent, PlaybackFailuresComponent, AudioPermissionComponent, PlaylistPickerComponent, QueueActionsComponent, QueueEditorComponent, RepeatButtonComponent, PlaybackNoticeComponent],
   templateUrl: './player-shell.component.html',
 })
 export class PlayerShellComponent {
@@ -38,7 +41,6 @@ export class PlayerShellComponent {
   protected readonly queueOpen = signal(false);
   protected readonly lyricsOpen = signal(false);
   private mobilePlayerHistoryEntry = false;
-  private mobilePlayerSwipeStart: { x: number; y: number } | null = null;
   protected readonly currentTrack = computed(() => {
     const snapshot = this.playback.snapshot();
     return snapshot?.currentTrackRef
@@ -57,11 +59,7 @@ export class PlayerShellComponent {
       ? this.player.positionSeconds()
       : this.playback.currentPositionSeconds(this.positionClock());
   });
-  protected readonly mobileProgressPercent = computed(() => {
-    const duration = (this.currentTrack()?.durationMs ?? 0) / 1_000;
-    if (!duration) return 0;
-    return Math.min(100, Math.max(0, this.displayedPositionSeconds() / duration * 100));
-  });
+
 
   public constructor() {
     this.playback.connect();
@@ -135,36 +133,6 @@ export class PlayerShellComponent {
     this.mobileSeekPreviewSeconds.set(null);
   }
 
-  protected startMobilePlayerSwipe(event: PointerEvent): void {
-    this.mobilePlayerSwipeStart = { x: event.clientX, y: event.clientY };
-  }
-
-  protected finishMobilePlayerSwipe(event: PointerEvent): void {
-    const start = this.mobilePlayerSwipeStart;
-    this.mobilePlayerSwipeStart = null;
-    if (!start) return;
-    const vertical = event.clientY - start.y;
-    const horizontal = Math.abs(event.clientX - start.x);
-    if (vertical >= 72 && vertical > horizontal * 1.25) this.closeMobilePlayer();
-  }
-
-  protected trapMobilePlayerFocus(event: Event, dialog: HTMLElement): void {
-    const keyboardEvent = event as KeyboardEvent;
-    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    )).filter((element) => !element.hasAttribute('hidden'));
-    if (focusable.length < 2) return;
-    const first = focusable[0]!;
-    const last = focusable.at(-1)!;
-    if (keyboardEvent.shiftKey && this.document.activeElement === first) {
-      keyboardEvent.preventDefault();
-      last.focus();
-    } else if (!keyboardEvent.shiftKey && this.document.activeElement === last) {
-      keyboardEvent.preventDefault();
-      first.focus();
-    }
-  }
-
   protected toggleSidebar(): void {
     this.sidebarCollapsed.update((collapsed) => {
       const next = !collapsed;
@@ -180,9 +148,9 @@ export class PlayerShellComponent {
   }
 
   protected async logout(): Promise<void> {
-    this.playback.disconnect();
     await this.sessionStore.logout();
-    await this.router.navigate(['/login']);
+    this.playback.disconnect();
+    await this.router.navigate(['/local']);
   }
 
   protected toggleLyrics(): void {
@@ -204,11 +172,6 @@ export class PlayerShellComponent {
   protected changeVolume(event: Event): void {
     const value = Number((event.target as HTMLInputElement).value);
     if (Number.isFinite(value)) this.player.setVolume(value);
-  }
-
-  protected formatTime(seconds: number): string {
-    if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
-    return `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`;
   }
 
   private finishClosingMobilePlayer(): void {

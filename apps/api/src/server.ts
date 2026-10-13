@@ -43,6 +43,7 @@ import { MetadataWarmRepository } from './cache/metadata-warm-repository.js';
 import { MetadataWarmWorker } from './cache/metadata-warm-worker.js';
 import { TopSongsRepository } from './cache/top-songs-repository.js';
 import { TopSongsWorker } from './cache/top-songs-worker.js';
+import { drainBeforeClose } from './shutdown.js';
 
 const config = loadConfig();
 const thirdPartyTelemetry = new ThirdPartyTelemetry();
@@ -112,6 +113,7 @@ const app = await buildApp({
   config,
   authService,
   accountService,
+  revocations,
   musicSourceService,
   catalogSync,
   topSongsRefresh: topSongsRepository,
@@ -166,17 +168,29 @@ async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   app.log.info({ signal }, 'Graceful shutdown started');
-  io.close();
-  await outboxWorker?.stop();
-  await playbackActivityProjector?.stop();
-  catalogSyncWorker?.stop();
-  cacheMaintenanceWorker?.stop();
-  lyricsCacheBackfillWorker?.stop();
-  await imageWarmWorker?.stop();
-  await metadataWarmWorker?.stop();
-  await topSongsWorker?.stop();
-  await app.close();
-  await database?.close();
+  try {
+    await drainBeforeClose({
+      budgetMs: 8_000, // Below the documented PM2 kill_timeout of 10 seconds.
+      timedOut: () => {
+        app.log.error('Graceful shutdown budget exhausted; durable work will recover on restart');
+        process.exit(1);
+      },
+      stop: [
+        () => catalogSyncWorker?.stop(), () => catalogSync?.stop(),
+        () => cacheMaintenanceWorker?.stop(), () => lyricsCacheBackfillWorker?.stop(),
+        () => imageWarmWorker?.stop(), () => metadataWarmWorker?.stop(),
+        () => topSongsWorker?.stop(), () => outboxWorker?.stop(),
+        () => playbackActivityProjector?.stop(),
+        () => io.drain(),
+        () => new Promise<void>(resolve => { io.close(() => resolve()); }),
+        () => app.close(),
+      ],
+      close: async () => { await database?.close(); },
+    });
+  } catch (error) {
+    app.log.error({ err: error }, 'Graceful shutdown failed');
+    process.exit(1);
+  }
 }
 
 process.once('SIGINT', () => void shutdown('SIGINT'));

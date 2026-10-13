@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule Hirmos daily backup
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 America/Lima
+Persistent=true
+Unit=hirmos-backup.service
+
+[Install]
+WantedBy=timers.target

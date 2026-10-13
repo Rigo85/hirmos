@@ -484,12 +484,28 @@ export class PlaybackRepository {
     deviceId: string;
     commandId: string;
     expectedRevision: number;
-    action: 'play' | 'pause' | 'next' | 'previous' | 'seek' | 'retry';
+    action: 'play' | 'pause' | 'next' | 'previous' | 'seek' | 'retry' | 'detach';
     positionMs?: number;
     reason?: 'user' | 'ended';
     anchor: PlaybackAnchor;
   }): Promise<PlaybackCommandResult> {
     if (!this.insideCommand) return this.command('control', input, repo => repo.control(input));
+    if (input.action === 'detach') {
+      const before = await this.snapshot(input.userId);
+      if (before.revision !== input.expectedRevision || before.activeDeviceId !== input.deviceId
+        || !before.leaseExpiresAt || Date.parse(before.leaseExpiresAt) <= Date.now()
+        || input.positionMs === undefined || !Number.isSafeInteger(input.positionMs)
+        || input.positionMs < 0 || input.positionMs > 86_400_000) return {status:'conflict',snapshot:before};
+      await this.db.query(`UPDATE playback_sessions SET status='paused',position_ms=$2,
+        position_observed_at=statement_timestamp(),active_device_id=NULL,lease_expires_at=NULL,
+        lease_epoch=lease_epoch+1,revision=revision+1,updated_at=statement_timestamp() WHERE user_id=$1`,
+        [input.userId,input.positionMs]);
+      await this.db.query(`INSERT INTO playback_checkpoints
+        (playback_session_id,queue_item_id,revision,position_ms,status,device_id,lease_epoch,observed_at)
+        SELECT id,current_queue_item_id,revision,position_ms,status,$2,lease_epoch,position_observed_at
+        FROM playback_sessions WHERE user_id=$1`,[input.userId,input.deviceId]);
+      return {status:'accepted',snapshot:await this.snapshot(input.userId)};
+    }
     if (input.action === 'retry') {
       const current = await this.snapshot(input.userId);
       if (!current.currentQueueItemId) return { status: 'conflict', snapshot: current };
@@ -859,7 +875,7 @@ export class PlaybackRepository {
       }
       const resumeClaim = name === 'claim' && before.renderPhase === 'awaiting_interaction';
       if (name === 'claim') { attempt += 1; phase = resumeClaim || after.status === 'playing' ? 'loading' : 'paused'; }
-      if (name === 'control' && input.action === 'pause' && !['error', 'blocked'].includes(before.renderPhase)) phase = 'paused';
+      if (name === 'control' && ['pause','detach'].includes(input.action ?? '') && !['error', 'blocked'].includes(before.renderPhase)) phase = 'paused';
       if (name === 'control' && input.action === 'pause' && before.renderPhase === 'awaiting_interaction') attempt += 1;
       if (name === 'update' && input.renderPhase === 'awaiting_interaction' && before.renderPhase !== 'awaiting_interaction') {
         if (state.since !== undefined) state.permissionBudgetMs = Math.max(0, 30_000 - (Date.now() - state.since));
@@ -870,7 +886,7 @@ export class PlaybackRepository {
         state.since = Date.now() - (30_000 - state.permissionBudgetMs);
         state.permissionBudgetMs = undefined;
       }
-      if (changedItem || name === 'claim' || (name === 'control' && ['pause','retry'].includes(input.action ?? ''))) {
+      if (changedItem || name === 'claim' || (name === 'control' && ['pause','retry','detach'].includes(input.action ?? ''))) {
         state.permissionBudgetMs = undefined;
       }
       if (name === 'control' && ['next', 'previous'].includes(input.action ?? '') && after.status === 'stopped') phase = 'paused';
@@ -945,7 +961,7 @@ function mapSnapshot(row: SnapshotRow, queueRows: QueueRow[]): PlaybackSnapshot 
       : new Date(row.failure_state.since + 30_000).toISOString(),
     sessionId: row.id,
     revision: Number(row.revision),
-    protocolVersion: 5,
+    protocolVersion: 6,
     queueRevision: Number(row.queue_revision),
     queueManuallyEdited:row.queue_manually_edited,
     queuePastCount:row.current_queue_item_id ? 0 : row.queue_past_count,

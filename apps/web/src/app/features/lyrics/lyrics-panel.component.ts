@@ -1,4 +1,3 @@
-import { HttpClient } from '@angular/common/http';
 import {
   Component,
   ElementRef,
@@ -13,7 +12,7 @@ import {
 } from '@angular/core';
 import type { LyricsResponse, Track } from '@hirmos/contracts';
 import type { Subscription } from 'rxjs';
-import { PlaybackSyncService } from '../../core/playback-sync.service';
+import { LYRICS_CONTEXT } from './lyrics-context';
 import { AppIconComponent } from '../../shared/app-icon.component';
 
 type LyricsDocument = LyricsResponse['lyrics'][number];
@@ -26,8 +25,7 @@ type LyricLine = LyricsDocument['lines'][number];
   styleUrl: './lyrics-panel.component.scss',
 })
 export class LyricsPanelComponent implements OnDestroy {
-  private readonly http = inject(HttpClient);
-  private readonly playback = inject(PlaybackSyncService);
+  protected readonly context = inject(LYRICS_CONTEXT);
   private readonly scrollContainer = viewChild<ElementRef<HTMLElement>>('scrollContainer');
   private scrollTimer: ReturnType<typeof setTimeout> | null = null;
   private adjustmentSave: Subscription | null = null;
@@ -69,9 +67,7 @@ export class LyricsPanelComponent implements OnDestroy {
       this.activeLineIndex.set(-1);
       this.following.set(true);
 
-      const subscription = this.http.get<LyricsResponse>(
-        `/api/music/tracks/${encodeURIComponent(track.id)}/lyrics`,
-      ).subscribe({
+      const subscription = this.context.load(track.id).subscribe({
         next: (response) => {
           const selected = response.lyrics.find((lyrics) =>
             lyrics.synced && lyrics.lines.some((line) => line.startMs !== null),
@@ -85,9 +81,12 @@ export class LyricsPanelComponent implements OnDestroy {
               : 'Esta canción no tiene letra disponible.');
           }
         },
-        error: () => {
+        error: (error:unknown) => {
           this.loading.set(false);
-          this.error.set('No pudimos cargar la letra.');
+          this.error.set(this.context.local ? error instanceof Error && error.message==='LOCAL_LYRICS_MISSING'
+            ? 'No hay una letra guardada para esta descarga. Puedes preparar portadas y letras desde Transferencias cuando vuelvas a online.'
+            : 'No pudimos leer la letra guardada. El audio sigue disponible; puedes reintentar.'
+            : 'No pudimos cargar la letra.');
         },
       });
       onCleanup(() => subscription.unsubscribe());
@@ -105,7 +104,7 @@ export class LyricsPanelComponent implements OnDestroy {
         if (!track || !lyrics) return;
         const playbackMs = Math.min(
           track.durationMs,
-          Math.max(0, this.playback.currentPositionSeconds() * 1_000),
+          Math.max(0, this.context.position() * 1_000),
         );
         this.playbackPositionMs.set(playbackMs);
         const nextIndex = findActiveLyricLine(
@@ -136,7 +135,7 @@ export class LyricsPanelComponent implements OnDestroy {
     if (line.startMs === null) return;
     this.following.set(true);
     const targetMs = Math.max(0, line.startMs - this.adjustmentMs());
-    void this.playback.seek(targetMs / 1_000);
+    void this.context.seek(targetMs / 1_000);
     this.scheduleActiveLineScroll();
   }
 
@@ -162,10 +161,7 @@ export class LyricsPanelComponent implements OnDestroy {
     this.adjustmentMs.set(adjustmentMs);
     this.adjustmentError.set(null);
     this.adjustmentSave?.unsubscribe();
-    this.adjustmentSave = this.http.put<{ adjustmentMs: number }>(
-      `/api/music/tracks/${encodeURIComponent(track.id)}/lyrics-adjustment`,
-      { adjustmentMs },
-    ).subscribe({
+    this.adjustmentSave = this.context.adjust(track.id, adjustmentMs).subscribe({
       next: (response) => {
         if (this.track()?.id === track.id) this.adjustmentMs.set(response.adjustmentMs);
       },

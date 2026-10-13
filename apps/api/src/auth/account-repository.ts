@@ -1,5 +1,6 @@
 import type { SessionUser, UserRole } from '@hirmos/contracts';
 import type { Database } from '../db/database.js';
+import { identityWrite } from './identity-write.js';
 
 export interface QueuedAccountMail {
   ciphertext: Buffer;
@@ -11,6 +12,8 @@ export interface AccountRepository {
     email: string;
     role: UserRole;
     createdBy: string;
+    actorSessionId?: string;
+    expectedInvitationId?: string;
     tokenHash: Buffer;
     expiresAt: Date;
     mail: QueuedAccountMail;
@@ -51,14 +54,19 @@ export class PostgresAccountRepository implements AccountRepository {
     email: string;
     role: UserRole;
     createdBy: string;
+    actorSessionId?: string;
+    expectedInvitationId?: string;
     tokenHash: Buffer;
     expiresAt: Date;
     mail: QueuedAccountMail;
   }): Promise<boolean> {
-    const result = await this.db.query<{ created: boolean }>(
+    const result = await identityWrite(this.db, tx => tx.query<{ created: boolean }>(
       `WITH eligible AS (
          SELECT 1
-          WHERE NOT EXISTS (
+          WHERE EXISTS(SELECT 1 FROM users WHERE id=$4 AND role='admin' AND disabled_at IS NULL)
+            AND ($8::uuid IS NULL OR EXISTS(SELECT 1 FROM auth_sessions WHERE id=$8 AND user_id=$4 AND revoked_at IS NULL AND expires_at>now()))
+            AND ($9::uuid IS NULL OR EXISTS(SELECT 1 FROM account_invitations WHERE id=$9 AND email=lower($1) AND accepted_at IS NULL AND revoked_at IS NULL))
+            AND NOT EXISTS (
             SELECT 1 FROM users WHERE lower(email) = lower($1)
           )
        ), refreshed AS (
@@ -82,6 +90,13 @@ export class PostgresAccountRepository implements AccountRepository {
          SELECT id FROM refreshed
          UNION ALL
          SELECT id FROM created
+       ), invalidated_mail AS (
+         UPDATE email_outbox SET failed_at=now(),last_error_code='INVITATION_REPLACED',lock_id=NULL,locked_at=NULL,
+           template_data_ciphertext=decode('00','hex') WHERE message_type='invitation' AND recipient=lower($1)
+           AND sent_at IS NULL AND failed_at IS NULL AND EXISTS(SELECT 1 FROM invitation)
+       ), audit AS (
+         INSERT INTO security_events(user_id,event_type,metadata)
+         SELECT $4,'invitation.queued',jsonb_build_object('invitationId',id) FROM invitation
        ), queued AS (
          INSERT INTO email_outbox
            (message_type, recipient, template_data_ciphertext, encryption_key_version)
@@ -97,8 +112,10 @@ export class PostgresAccountRepository implements AccountRepository {
         input.expiresAt,
         input.mail.ciphertext,
         input.mail.keyVersion,
+        input.actorSessionId ?? null,
+        input.expectedInvitationId ?? null,
       ],
-    );
+    ));
     return result.rows[0]?.created ?? false;
   }
 
@@ -108,7 +125,7 @@ export class PostgresAccountRepository implements AccountRepository {
     passwordHash: string;
     now: Date;
   }): Promise<SessionUser | null> {
-    const result = await this.db.query<UserRow>(
+    const result = await identityWrite(this.db, tx => tx.query<UserRow>(
       `WITH consumed AS (
          UPDATE account_invitations i
             SET accepted_at = $4
@@ -133,7 +150,7 @@ export class PostgresAccountRepository implements AccountRepository {
        )
        SELECT id, email, display_name, role FROM created`,
       [input.tokenHash, input.displayName, input.passwordHash, input.now],
-    );
+    ));
     const row = result.rows[0];
     return row
       ? { id: row.id, email: row.email, displayName: row.display_name, role: row.role }
@@ -165,7 +182,7 @@ export class PostgresAccountRepository implements AccountRepository {
     mail: QueuedAccountMail;
     now: Date;
   }): Promise<void> {
-    await this.db.query(
+    await identityWrite(this.db, tx => tx.query(
       `WITH target AS (
          SELECT id, email
            FROM users
@@ -201,7 +218,7 @@ export class PostgresAccountRepository implements AccountRepository {
         'accepted',
         input.now,
       ],
-    );
+    ));
   }
 
   public async completeRecovery(input: {
@@ -209,13 +226,14 @@ export class PostgresAccountRepository implements AccountRepository {
     passwordHash: string;
     now: Date;
   }): Promise<string | null> {
-    const result = await this.db.query<{ user_id: string }>(
+    const result = await identityWrite(this.db, tx => tx.query<{ user_id: string }>(
       `WITH consumed AS (
          UPDATE password_recovery_tokens
             SET consumed_at = $3
           WHERE token_hash = $1
             AND consumed_at IS NULL
             AND expires_at > $3
+            AND EXISTS(SELECT 1 FROM users WHERE id=password_recovery_tokens.user_id AND disabled_at IS NULL)
          RETURNING user_id
        ), credential AS (
          UPDATE password_credentials
@@ -231,7 +249,7 @@ export class PostgresAccountRepository implements AccountRepository {
        )
        SELECT user_id FROM consumed`,
       [input.tokenHash, input.passwordHash, input.now],
-    );
+    ));
     return result.rows[0]?.user_id ?? null;
   }
 

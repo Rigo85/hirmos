@@ -74,13 +74,21 @@ describe('incident and permission presentation', () => {
     expect(root.textContent?.trim()).toBe('');
   });
 
-  it('still offers authentication and unconfirmed-failure recovery', () => {
+  it('access renewal does not duplicate notices or hide an unrelated decode failure', () => {
     const {playback,fixture,root}=setup();
     playback.authenticationRequired.set(true); fixture.detectChanges();
-    expect(root.querySelector('a')?.getAttribute('href')).toBe('/login');
+    expect(root.querySelector('a')).toBeNull();
+    expect(root.textContent).not.toContain('Renovar acceso');
+    expect(root.textContent).toContain('Falló el audio');
     playback.authenticationRequired.set(false); playback.unconfirmedFailure.set({code:'decode'}); fixture.detectChanges();
     expect(root.textContent).toContain('pendiente de confirmar');
     root.querySelector('button')!.click(); expect(playback.retryFailureReport).toHaveBeenCalledOnce();
+  });
+
+  it('leaves confirmed session-expiry presentation to the access notice', () => {
+    const {playback,fixture,root}=setup('blocked','authentication');
+    playback.authenticationRequired.set(true); fixture.detectChanges();
+    expect(root.querySelector('section')).toBeNull();
   });
 
   it.each(['local','remote','expired'])('permission waiting has the right neutral action for %s', kind => {

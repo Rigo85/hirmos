@@ -1,0 +1,55 @@
+<main class="admin-page account-ui">
+  <header class="admin-header">
+    <a class="brand" routerLink="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>Hirmos</span></a>
+    <a class="quiet-button" routerLink="/">← Volver al reproductor</a>
+  </header>
+  <app-access-status />
+  <section class="admin-content">
+    <p class="eyebrow">ADMINISTRACIÓN</p>
+    <div class="heading"><h1>Copias de seguridad</h1>
+      <button class="outline-button" type="button" (click)="load()" [disabled]="loading()">{{ loading() ? 'Consultando…' : 'Actualizar estado' }}</button>
+    </div>
+    <p class="muted">Base de datos, letras conservadas y configuración. Sin cifrado, según la política acordada.</p>
+    @if (error()) { <p class="form-error" role="alert">{{ error() }}</p> }
+    @if (!status() && loading()) { <p role="status">Consultando los respaldos…</p> }
+    @if (status(); as state) {
+      <div aria-live="polite">
+        @if (!state.lastSuccess) {
+          <p class="notice">No hay una copia verificada registrada. Esto no confirma que la tarea diaria esté instalada.</p>
+        } @else if (state.overdue) {
+          <p class="notice">Han pasado más de 36 horas sin un respaldo nuevo verificado. Revisa la tarea diaria.</p>
+        }
+        @if (state.lastAttempt?.outcome === 'failed' || state.lastAttempt?.outcome === 'interrupted') {
+          <p class="notice">El último intento no terminó correctamente. La copia anterior, si existe, se mantiene como último respaldo verificado.</p>
+        }
+        @if (state.lastAttempt?.outcome === 'warning') {
+          <p class="notice">Se publicó una copia, pero hubo un problema al registrar su estado o limpiar copias antiguas. Revisa el registro de la tarea antes de darla por cerrada.</p>
+        }
+      </div>
+      <article class="backup-card" aria-labelledby="backup-success">
+        <h2 id="backup-success">Último respaldo verificado</h2>
+        @if (state.lastSuccess; as success) {
+          <dl>
+            <div><dt>Datos hasta</dt><dd>{{ success.snapshotAt | date:'medium' }}</dd></div>
+            <div><dt>Verificado</dt><dd>{{ success.verifiedAt | date:'medium' }}</dd></div>
+            <div><dt>Tamaño de archivos</dt><dd>{{ success.bytes / 1048576 | number:'1.1-1' }} MiB</dd></div>
+            <div><dt>Tiempo hasta verificar</dt><dd>{{ success.durationMs / 1000 | number:'1.1-1' }} s</dd></div>
+          </dl>
+        } @else { <p class="muted">Todavía no disponible.</p> }
+      </article>
+      @if (state.lastAttempt; as attempt) {
+        <article class="backup-card" aria-labelledby="backup-attempt">
+          <h2 id="backup-attempt">Último intento</h2>
+          <dl>
+            <div><dt>Resultado</dt><dd>{{ outcomes[attempt.outcome] }}</dd></div>
+            <div><dt>Etapa</dt><dd>{{ phases[attempt.phase] }}</dd></div>
+            <div><dt>Inicio</dt><dd>{{ attempt.startedAt | date:'medium' }}</dd></div>
+            @if (attempt.finishedAt) { <div><dt>Fin</dt><dd>{{ attempt.finishedAt | date:'medium' }}</dd></div> }
+          </dl>
+        </article>
+      }
+      <p class="muted">Consulta: {{ state.checkedAt | date:'medium' }}. Se actualiza cada minuto mientras esta pantalla está visible.</p>
+    }
+    <p class="scope-note">Este panel informa de la verificación realizada al crear cada copia; no comprueba continuamente el disco ni certifica una restauración. La programación diaria se configura en el servidor, no desde aquí. No incluye las descargas offline del navegador.</p>
+  </section>
+</main>

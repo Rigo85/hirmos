@@ -4,7 +4,8 @@ import type { CatalogSyncControl } from './catalog-sync-coordinator.js';
 export class CatalogSyncWorker {
   private interval: NodeJS.Timeout | null = null;
   private kickoff: NodeJS.Timeout | null = null;
-  private running = false;
+  private active: Promise<void> | null = null;
+  private stopping = false;
 
   public constructor(
     private readonly coordinator: CatalogSyncControl,
@@ -13,29 +14,31 @@ export class CatalogSyncWorker {
   ) {}
 
   public start(): void {
-    if (this.interval || this.kickoff) return;
+    if (this.interval || this.kickoff || this.active) return;
+    this.stopping = false;
     this.kickoff = setTimeout(() => void this.run(), 10_000);
     this.kickoff.unref();
     this.interval = setInterval(() => void this.run(), this.intervalMs);
     this.interval.unref();
   }
 
-  public stop(): void {
+  public async stop(): Promise<void> {
+    this.stopping = true;
     if (this.kickoff) clearTimeout(this.kickoff);
     if (this.interval) clearInterval(this.interval);
     this.kickoff = null;
     this.interval = null;
+    await this.active;
   }
 
-  private async run(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    const trigger = this.coordinator.trigger();
-    if (!trigger.started) {
-      this.running = false;
-      return;
-    }
+  private run(): Promise<void> {
+    if (this.stopping) return Promise.resolve();
+    return this.active ??= this.performRun().finally(() => { this.active = null; });
+  }
+
+  private async performRun(): Promise<void> {
     try {
+      const trigger = this.coordinator.trigger();
       const { counts, followUpError } = await trigger.completion;
       this.logger.info({ catalogSync: { outcome: 'success', ...counts } }, 'Catalog sync completed');
       if (followUpError) {
@@ -48,8 +51,6 @@ export class CatalogSyncWorker {
           reason: error instanceof Error ? error.name : 'unknown',
         },
       }, 'Catalog sync failed');
-    } finally {
-      this.running = false;
     }
   }
 }

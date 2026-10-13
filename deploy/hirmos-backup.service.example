@@ -1,0 +1,11 @@
+[Unit]
+Description=Hirmos daily backup
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/hirmos/backup.env
+ExecStart=/usr/bin/node /opt/hirmos/current/tools/backup/index.mjs
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=45min

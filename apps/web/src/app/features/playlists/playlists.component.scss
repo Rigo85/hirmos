@@ -4,7 +4,7 @@
 .primary-button,.outline-button,summary { display:inline-flex;align-items:center;justify-content:center;gap:9px;width:auto;min-height:44px;margin:0;padding:0 18px;line-height:1.2;white-space:nowrap; }
 .playback-actions app-icon,summary app-icon { width:18px;height:18px;font-size:18px;flex:none; }
 .primary-button:hover:not(:disabled){transform:none}
-.playlist-options { position:relative;margin-left:auto; }
+.playlist-options { position:relative; }
 summary { cursor:pointer;list-style:none;border:1px solid var(--line);border-radius:11px;color:var(--muted);font-weight:600; }
 summary::-webkit-details-marker{display:none}
 .options-popover { position:absolute;right:0;top:calc(100% + 8px);z-index:5;width:220px;padding:6px;border:1px solid var(--line);border-radius:12px;background:#15191e;box-shadow:0 12px 32px #0007; }

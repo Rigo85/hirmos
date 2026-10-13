@@ -1,0 +1,31 @@
+<section #dialog class="mobile-now-playing" role="dialog" aria-modal="true" aria-labelledby="mobile-now-playing-title" (keydown)="trapFocus($event, dialog)">
+  @if (coverUrl()) { <img class="mobile-now-playing__backdrop" [src]="coverUrl()" alt="" aria-hidden="true"> }
+  <header class="mobile-now-playing__header" (pointerdown)="startSwipe($event)" (pointerup)="finishSwipe($event)">
+    <span class="mobile-now-playing__handle" aria-hidden="true"></span>
+    <button class="mobile-now-playing__close" type="button" (click)="close.emit()" aria-label="Cerrar Reproduciendo ahora"><app-icon name="chevron-down" /></button>
+    <div><p>REPRODUCIENDO AHORA</p><span><ng-content select="[playerStatus]" /></span></div>
+    <span class="mobile-now-playing__header-spacer" aria-hidden="true"></span>
+  </header>
+  <div class="mobile-now-playing__content">
+    <ng-content select="[playerNotice]" />
+    <div class="mobile-now-playing__cover">
+      @if (coverUrl()) { <img [src]="coverUrl()" alt=""> } @else { <span>{{ title().slice(0, 2).toUpperCase() }}</span> }
+    </div>
+    <div class="mobile-now-playing__metadata">
+      <div><h2 id="mobile-now-playing-title">{{ title() }}</h2><p>{{ artist() }}@if (album()) { <span aria-hidden="true"> · </span>{{ album() }} }</p></div>
+      <ng-content select="[playerFavorite]" />
+    </div>
+    <div class="mobile-now-playing__progress">
+      <input type="range" min="0" [max]="duration()" step="0.1" [value]="duration() ? position() : 0" [disabled]="!canSeek()" (input)="preview.emit($event)" (change)="seek.emit($event)" aria-label="Posición de reproducción">
+      <div><time>{{ time(position()) }}</time><time>{{ time(duration()) }}</time></div>
+      @if (retrySeconds(); as seconds) { <small role="timer" aria-live="off">Reintento disponible en {{ seconds }} s</small> }
+    </div>
+    <div class="mobile-now-playing__controls">
+      <button type="button" aria-label="Anterior" [disabled]="!canNavigate()" (click)="previous.emit()"><app-icon name="previous" /></button>
+      <button class="mobile-now-playing__play" type="button" [disabled]="!canPlay()" [attr.title]="retrySeconds() ? 'Reintento disponible en ' + retrySeconds() + ' s' : null" (click)="toggle.emit()" [attr.aria-label]="playing() ? 'Pausar' : 'Reproducir'"><app-icon [name]="playing() ? 'pause' : 'play'" /></button>
+      <button type="button" aria-label="Siguiente" [disabled]="!canNavigate()" (click)="next.emit()"><app-icon name="next" /></button>
+    </div>
+    <div class="mobile-now-playing__actions" [style.grid-template-columns]="'repeat(' + actionColumns() + ',minmax(0,1fr))'"><ng-content select="[playerActions]" /></div>
+    <ng-content select="[playerClaim]" />
+  </div>
+</section>

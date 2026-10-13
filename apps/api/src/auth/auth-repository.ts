@@ -1,5 +1,6 @@
 import type { SessionUser, UserRole } from '@hirmos/contracts';
 import type { Database } from '../db/database.js';
+import { identityWrite, IdentityChangeError } from './identity-write.js';
 
 export interface PasswordUser extends SessionUser {
   passwordHash: string;
@@ -29,6 +30,7 @@ export interface AuthRepository {
     expiresAt: Date;
     ipAddress: string | null;
     userAgent: string | null;
+    expectedPasswordHash?: string;
   }): Promise<string>;
   findSession(tokenHash: Buffer): Promise<AuthSessionRecord | null>;
   touchSession(id: string, at: Date): Promise<void>;
@@ -108,17 +110,21 @@ export class PostgresAuthRepository implements AuthRepository {
     expiresAt: Date;
     ipAddress: string | null;
     userAgent: string | null;
+    expectedPasswordHash?: string;
   }): Promise<string> {
-    const result = await this.db.query<{ id: string }>(
+    return identityWrite(this.db, async tx => {
+    const result = await tx.query<{ id: string }>(
       `INSERT INTO auth_sessions
          (user_id, token_hash, expires_at, ip_address, user_agent)
-       VALUES ($1, $2, $3, $4, $5)
+       SELECT $1, $2, $3, $4, $5 FROM users u WHERE u.id=$1 AND u.disabled_at IS NULL
+         AND ($6::text IS NULL OR EXISTS(SELECT 1 FROM password_credentials p WHERE p.user_id=u.id AND p.password_hash=$6))
        RETURNING id`,
-      [input.userId, input.tokenHash, input.expiresAt, input.ipAddress, input.userAgent],
+      [input.userId, input.tokenHash, input.expiresAt, input.ipAddress, input.userAgent, input.expectedPasswordHash ?? null],
     );
     const id = result.rows[0]?.id;
-    if (!id) throw new Error('Failed to create session');
+    if (!id) throw new IdentityChangeError('REAUTH_REQUIRED');
     return id;
+    });
   }
 
   public async findSession(tokenHash: Buffer): Promise<AuthSessionRecord | null> {

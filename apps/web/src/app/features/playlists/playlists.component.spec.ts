@@ -22,6 +22,10 @@ describe('personal playlists',()=>{
     expect(f.nativeElement.textContent).toContain('5000 canciones');
     expect(f.nativeElement.querySelectorAll('.playlist-items li')).toHaveLength(2);
   });
+  it('does not insert downloaded status between title and artist',async()=>{
+    const f=await view();expect(f.nativeElement.querySelector('.track-copy app-download-badge')).toBeNull();
+    expect(f.nativeElement.querySelector('.playlist-items li > app-download-badge + time')).not.toBeNull();
+  });
   it('addresses a duplicated track by playlist item id',async()=>{const f=await view();
     const buttons=f.nativeElement.querySelectorAll('.playlist-items button');buttons[1].click();
     expect(play).toHaveBeenCalledWith('list',7,'item-b',false);

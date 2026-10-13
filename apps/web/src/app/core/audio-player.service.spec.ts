@@ -50,6 +50,13 @@ describe('AudioPlayerService', () => {
     expect(audio.muted).toBe(false);
     expect(storage.setItem).not.toHaveBeenCalled();
   });
+  it('uses the exact local Blob URL and never decorates it as an HTTP stream',async()=>{
+    service.load(track,'blob:http://localhost/synthetic');await service.resume();
+    expect(audio.src).toBe('blob:http://localhost/synthetic');
+    expect(()=>service.load(track,'https://example.test/file')).toThrow();
+    service.clear();service.load(track);
+    expect(audio.src).toContain('/api/music/tracks/encoded-track/stream?');
+  });
 
   it('clears removed audio and ignores late DOM events while preserving local volume', async () => {
     await service.play(track);

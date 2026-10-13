@@ -7,6 +7,7 @@
       <button class="primary-button" (click)="play()" [disabled]="!p.count || busy()"><app-icon name="play" /> Reproducir toda</button>
       <button class="outline-button" (click)="play(null,true)" [disabled]="!p.count || busy()"><app-icon name="shuffle" /> Aleatorio</button>
       <button class="outline-button" (click)="addToQueue()" [disabled]="!p.count||busy()" title="Añadir toda la playlist sin cambiar la canción actual"><app-icon name="queue" /> Añadir a cola</button>
+      <app-download-button [playlist]="p" />
       <details #options class="playlist-options" (keydown.escape)="options.open=false; optionsSummary.focus()">
         <summary #optionsSummary><app-icon name="more" /> Opciones</summary>
         <div class="options-popover">
@@ -55,7 +56,7 @@
       <li [class.playlist-current]="item.id===currentItemId()" [class.playlist-selected]="selected().has(item.id)" [attr.aria-current]="item.id===currentItemId()?'true':null" [draggable]="!filter()&&!busy()" (dragstart)="dragStart($event,item.id)" (dragover)="$event.preventDefault()" (drop)="drop($event,item.id)">
         <input type="checkbox" [checked]="selected().has(item.id)" (change)="toggle(item.id)" [attr.aria-label]="'Seleccionar '+item.track.title">
         <button class="icon-button" (click)="play(item.id)" [disabled]="item.availability!=='available'" [attr.aria-label]="(playing(item.id)?'Pausar ':'Reproducir ')+item.track.title"><app-icon [name]="playing(item.id)?'pause':'play'" /></button>
-        <span class="ordinal">{{item.ordinal+1}}</span><div class="track-copy"><strong>{{item.track.title}}</strong><div>@if(item.track.artistId){<a [routerLink]="['/artists',item.track.artistId]">{{item.track.artist}}</a>}@else{<span>{{item.track.artist}}</span>} · @if(item.track.albumId){<a [routerLink]="['/albums',item.track.albumId]">{{item.track.album}}</a>}@else{<span>{{item.track.album}}</span>}</div>@if(item.id===currentItemId()){<small>{{playing(item.id)?'En reproducción':'Actual · en pausa'}} · conserva la cola</small>}@if(item.availability!=='available'){<small>{{availability(item)}}</small>}</div><time>{{duration(item.track.durationMs)}}</time>
+        <span class="ordinal">{{item.ordinal+1}}</span><div class="track-copy"><strong>{{item.track.title}}</strong><div>@if(item.track.artistId){<a [routerLink]="['/artists',item.track.artistId]">{{item.track.artist}}</a>}@else{<span>{{item.track.artist}}</span>} · @if(item.track.albumId){<a [routerLink]="['/albums',item.track.albumId]">{{item.track.album}}</a>}@else{<span>{{item.track.album}}</span>}</div>@if(item.id===currentItemId()){<small>{{playing(item.id)?'En reproducción':'Actual · en pausa'}} · conserva la cola</small>}@if(item.availability!=='available'){<small>{{availability(item)}}</small>}</div><app-download-badge [reference]="item.track.id" /><time>{{duration(item.track.durationMs)}}</time>
       </li>
     }@empty{<li class="muted">{{filter()?'Sin coincidencias en esta playlist.':'Todavía no hay canciones. Añádelas desde la biblioteca.'}}</li>}</ol>
     @if(nextOffset()!==null){<button class="outline-button" (click)="load(nextOffset()!)" [disabled]="loading()">Cargar más · {{items().length}} de {{p.count}}</button>}

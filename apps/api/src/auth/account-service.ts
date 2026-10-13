@@ -25,7 +25,8 @@ export class AccountService {
     private readonly revocations?: SessionRevocationNotifier,
   ) {}
 
-  public async invite(email: string, role: UserRole, createdBy: string): Promise<boolean> {
+  public async invite(email: string, role: UserRole, createdBy: string,
+    context: { actorSessionId?: string; expectedInvitationId?: string } = {}): Promise<boolean> {
     const normalizedEmail = email.trim().toLowerCase();
     const token = newToken();
     const now = this.now();
@@ -37,6 +38,7 @@ export class AccountService {
       email: normalizedEmail,
       role,
       createdBy,
+      ...context,
       tokenHash: hashOneTimeToken(token),
       expiresAt: new Date(now.getTime() + INVITATION_TTL_MS),
       mail: encrypted,

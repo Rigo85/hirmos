@@ -54,6 +54,7 @@ export class AudioPlayerService {
   private interactionRequiredHandler: (() => void) | null = null;
   private playbackFailedHandler: ((message: string, failure: PlaybackFailure & { requestId: string | null }) => void) | null = null;
   private requestId: string | null = null;
+  private localSource: string | null = null;
   private episodeStartedAt = 0;
   private stableSince = 0;
   private recoveryDeadline: number | null = null;
@@ -76,15 +77,21 @@ export class AudioPlayerService {
     this.audio.volume = this.volume();
     this.audio.muted = this.muted();
     // Local output only: never part of the shared playback snapshot/lease.
-    const storageChanged = (event: StorageEvent) => {
-      if (event.key !== null && event.key !== AUDIO_OUTPUT_STORAGE_KEY) return;
+    const outputChanged = () => {
       const preference = this.readOutputPreference({ volume: this.volume(), muted: this.muted() });
       this.volume.set(preference.volume);
       this.muted.set(preference.muted);
       this.applyOutputPreference();
     };
+    const storageChanged = (event: StorageEvent) => {
+      if (event.key === null || event.key === AUDIO_OUTPUT_STORAGE_KEY) outputChanged();
+    };
     window.addEventListener('storage', storageChanged);
-    inject(DestroyRef).onDestroy(() => window.removeEventListener('storage', storageChanged));
+    window.addEventListener('hirmos-output-changed', outputChanged);
+    inject(DestroyRef).onDestroy(() => {
+      window.removeEventListener('storage', storageChanged);
+      window.removeEventListener('hirmos-output-changed', outputChanged);
+    });
     this.audio.addEventListener('loadstart', () => {
       if (this.requested()) this.phase.set('loading');
     });
@@ -130,9 +137,11 @@ export class AudioPlayerService {
     });
   }
 
-  public load(track: Track): void {
+  public load(track: Track, localSource: string | null = null): void {
+    if (localSource !== null && !localSource.startsWith('blob:')) throw new Error('LOCAL_AUDIO_REQUIRES_BLOB');
     this.error.set(null);
-    if (this.track()?.id === track.id) return;
+    if (this.track()?.id === track.id && this.localSource === localSource) return;
+    this.localSource = localSource;
     this.requested.set(false);
     this.playGeneration += 1;
     this.clearWatchdog();
@@ -187,6 +196,7 @@ export class AudioPlayerService {
     this.track.set(null);
     this.pendingSeek = null;
     this.requestId = null;
+    this.localSource = null;
     this.recoveryDeadline = null;
     this.observedDeadline = null;
     this.recoveryAttempts = 0;
@@ -258,6 +268,7 @@ export class AudioPlayerService {
     try {
       this.outputStorage?.setItem(AUDIO_OUTPUT_STORAGE_KEY,
         JSON.stringify({ volume: this.volume(), muted: this.muted() }));
+      window.dispatchEvent(new Event('hirmos-output-changed'));
     } catch { /* This session still works when storage is unavailable/full. */ }
   }
 
@@ -469,10 +480,10 @@ export class AudioPlayerService {
     const track = this.track();
     if (!track) return;
     this.sourceGeneration += 1;
-    this.requestId = crypto.randomUUID();
+    this.requestId = this.localSource ? null : crypto.randomUUID();
     this.pendingSeek = seekTo === undefined ? null : Math.max(0, seekTo);
     const base = `/api/music/tracks/${encodeURIComponent(track.id)}/stream`;
-    this.audio.src = `${base}?attempt=${this.sourceAttempt}&playbackRequest=${this.requestId}`;
+    this.audio.src = this.localSource ?? `${base}?attempt=${this.sourceAttempt}&playbackRequest=${this.requestId}`;
     this.audio.load();
   }
 

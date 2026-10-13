@@ -13,7 +13,8 @@ import { LazyCoverDirective } from '../../shared/lazy-cover.directive';
 
 type LibraryView = 'albums' | 'artists' | 'tracks' | 'genres';
 
-@Component({ selector: 'app-library', imports: [RouterLink, TrackRowComponent, LazyCoverDirective], templateUrl: './library.component.html' })
+@Component({ selector: 'app-library', imports: [RouterLink, TrackRowComponent, LazyCoverDirective], templateUrl: './library.component.html',
+  styles: ['.album-card { cursor: default; } .album-card strong a:hover, .album-card small a:hover, .album-card a:focus-visible { text-decoration: underline; }'] })
 export class LibraryComponent {
   private readonly http = inject(HttpClient);
   private readonly route = inject(ActivatedRoute);

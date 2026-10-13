@@ -33,6 +33,13 @@ export interface HabitEvidence {
 export class ActivityRepository {
   public constructor(private readonly db: Database, private readonly eventTime?: Date) {}
 
+  public async recordOffline(userId:string,sourceId:string,remoteTrackId:string,at:Date,heardMs:number,started:boolean):Promise<void>{
+    // Same listened-time/start counters, but never overwrite the online resume
+    // position or manufacture a skip/completion from an interrupted local file.
+    await new ActivityRepository(this.db,at).updateStats(userId,sourceId,remoteTrackId,
+      started?'started':'resumed',0,heardMs,true);
+  }
+
   public async recordEvent(input: {
     userId: string;
     deviceId?: string | null;
@@ -233,6 +240,7 @@ export class ActivityRepository {
     type: ListenEventType,
     positionMs: number,
     listenedMs: number,
+    offline = false,
   ): Promise<void> {
     await this.db.query(
       `WITH lifetime AS (
@@ -257,8 +265,8 @@ export class ActivityRepository {
          listened_ms = user_track_stats.listened_ms + EXCLUDED.listened_ms,
          first_played_at = LEAST(user_track_stats.first_played_at, EXCLUDED.first_played_at),
          last_played_at = GREATEST(EXCLUDED.last_played_at, user_track_stats.last_played_at),
-         last_position_ms = EXCLUDED.last_position_ms,
-         last_observed_at = $7::timestamptz
+         last_position_ms = CASE WHEN $8 THEN user_track_stats.last_position_ms ELSE EXCLUDED.last_position_ms END,
+         last_observed_at = CASE WHEN $8 THEN user_track_stats.last_observed_at ELSE $7::timestamptz END
        RETURNING 1
        )
        INSERT INTO user_track_daily_stats
@@ -285,7 +293,7 @@ export class ActivityRepository {
                                    user_track_daily_stats.last_played_at),
          estimated = user_track_daily_stats.estimated OR EXCLUDED.estimated`,
       [userId, sourceId, remoteTrackId, type, Math.max(0, positionMs), listenedMs,
-       this.eventTime ?? new Date()],
+       this.eventTime ?? new Date(), offline],
     );
   }
 }

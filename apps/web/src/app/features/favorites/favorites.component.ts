@@ -5,10 +5,11 @@ import { firstValueFrom } from 'rxjs';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { AppIconComponent } from '../../shared/app-icon.component';
 import { TrackRowComponent } from '../../shared/track-row.component';
+import { DownloadButtonComponent } from '../../shared/download-button.component';
 
 @Component({
   selector: 'app-favorites',
-  imports: [AppIconComponent, TrackRowComponent],
+  imports: [AppIconComponent, TrackRowComponent, DownloadButtonComponent],
   templateUrl: './favorites.component.html',
 })
 export class FavoritesComponent {

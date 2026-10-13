@@ -8,7 +8,7 @@
 >
   <div class="lyrics-panel__head">
     <div>
-      <p class="eyebrow">LETRA</p>
+      <p class="eyebrow">{{context.local ? 'LETRA · GUARDADA EN ESTE DISPOSITIVO' : 'LETRA'}}</p>
       <h2>{{ track()?.title || 'Sin canción' }}</h2>
       @if (lyricsDocument()?.displayArtist) {
         <p class="lyrics-panel__artist">{{ lyricsDocument()!.displayArtist }}</p>

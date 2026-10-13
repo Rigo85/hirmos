@@ -1,8 +1,17 @@
 import { Routes } from '@angular/router';
-import { authGuard } from './core/auth.guard';
+import { authGuard, localProfileGuard } from './core/auth.guard';
 import { adminGuard } from './core/admin.guard';
 
 export const routes: Routes = [
+  { path: 'access', loadComponent: () => import('./features/local-access/access-gate.component').then(m => m.AccessGateComponent) },
+  { path:'lab/local-session',canMatch:[()=>['localhost','127.0.0.1','[::1]'].includes(location.hostname)],loadComponent:()=>import('./features/local-session-lab/local-session-lab.component').then(m=>m.LocalSessionLabComponent) },
+  { path:'local',canActivate:[localProfileGuard],loadComponent:()=>import('./features/local-access/local-access.component').then(m=>m.LocalAccessComponent) },
+  {
+    path: 'lab/download-storage',
+    canMatch: [() => ['localhost','127.0.0.1','[::1]'].includes(location.hostname)],
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/storage-lab/storage-lab.component').then(m => m.StorageLabComponent),
+  },
   {
     path: 'login',
     loadComponent: () =>
@@ -31,6 +40,10 @@ export const routes: Routes = [
       ),
   },
   {
+    path: 'admin/backups', canActivate: [adminGuard],
+    loadComponent: () => import('./features/admin-backups/admin-backups.component').then(m => m.AdminBackupsComponent),
+  },
+  {
     path: 'admin/source',
     canActivate: [adminGuard],
     loadComponent: () =>
@@ -44,6 +57,8 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./features/shell/player-shell.component').then((module) => module.PlayerShellComponent),
     children: [
+      { path:'downloads',loadComponent:()=>import('./features/downloads/downloads.component').then(m=>m.DownloadsComponent) },
+      { path: 'account', loadComponent: () => import('./features/account/account.component').then(m => m.AccountComponent) },
       { path:'playlists',loadComponent:()=>import('./features/playlists/playlists.component').then(m=>m.PlaylistsComponent) },
       { path:'playlists/:id',loadComponent:()=>import('./features/playlists/playlists.component').then(m=>m.PlaylistsComponent) },
       {

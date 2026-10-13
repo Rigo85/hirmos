@@ -1,5 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable, computed, effect, inject, signal } from '@angular/core';
+import { Injectable, InjectionToken, computed, effect, inject, signal, untracked } from '@angular/core';
 import type {
   PlaybackAnchor,
   PlaybackFailure,
@@ -26,10 +26,17 @@ import { firstValueFrom, from, timeout, retry, timer, throwError } from 'rxjs';
 import { AudioPlayerService } from './audio-player.service';
 import { MediaSessionService } from './media-session.service';
 import { SessionStore } from './session.store';
+import { PlaybackModeService } from './playback-mode.service';
 import { deliverWithAckRetry } from './playback-command-delivery';
 import { acceptsSnapshot, playbackAnchor, samePlaybackAnchor, PlaybackCommandSequencer } from './playback-consistency';
 
 type ControlAction = 'play' | 'pause' | 'next' | 'previous' | 'seek' | 'retry';
+
+// Explicit test seam: bundled test modules must not depend on ESM mock order.
+// Production still creates the same Socket.IO client with the options below.
+export const HIRMOS_SOCKET_FACTORY = new InjectionToken<typeof io>('Hirmos Socket.IO factory', {
+  providedIn: 'root', factory: () => io,
+});
 
 @Injectable({ providedIn: 'root' })
 export class PlaybackSyncService {
@@ -38,11 +45,14 @@ export class PlaybackSyncService {
   private readonly mediaSession = inject(MediaSessionService);
   private readonly sessionStore = inject(SessionStore);
   private readonly deviceId = playerInstanceId(this.sessionStore.session()?.user.id);
+  private readonly modes = inject(PlaybackModeService);
+  private readonly ownershipFence = signal<number>(readOwnershipFence(this.deviceId));
   private readonly tracks = new Map<string, Track>();
   private readonly socket: Socket<ServerToClientEvents, ClientToServerEvents>;
   private readonly trackLoads = new Map<string, Promise<Track | null>>();
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private leaseExpiry: ReturnType<typeof setTimeout> | null = null;
+  private participationGeneration = 0;
   private reconcileSequence = 0;
   private compactResyncRequested=false;
   private publishInFlight = false;
@@ -97,7 +107,7 @@ export class PlaybackSyncService {
       const id = this.dismissedFailure();
       if (id) { try { localStorage.setItem(this.dismissalKey(), id); } catch { /* keep in memory */ } }
     });
-    this.socket = io({
+    this.socket = inject(HIRMOS_SOCKET_FACTORY)({
       path: '/socket.io',
       autoConnect: false,
       transports: ['websocket', 'polling'],
@@ -109,6 +119,9 @@ export class PlaybackSyncService {
       },
     });
     this.socket.on('connect', () => {
+      if (!this.sessionStore.canUseRemote()) { this.socket.disconnect(); return; }
+      this.sessionStore.deviceConnection.set('connected');
+      this.sessionStore.remoteStatus.set('available');
       this.authenticationRequired.set(false);
       this.terminalSocketStop.set(false);
       this.connected.set(true);
@@ -119,12 +132,14 @@ export class PlaybackSyncService {
     });
     this.socket.on('disconnect', (reason) => {
       this.connected.set(false);
+      if (this.sessionStore.canUseRemote()) this.sessionStore.deviceConnection.set('interrupted');
       this.recordDiagnostic({ kind: 'disconnect', reason });
-      if (isTerminalPlaybackDisconnect(reason)) {
+      if (this.sessionStore.canUseRemote() && isTerminalPlaybackDisconnect(reason)) {
         this.stopForTerminalDisconnect();
       }
     });
     this.socket.on('connect_error', (error) => {
+      if (!this.sessionStore.canUseRemote()) return;
       this.recordDiagnostic({ kind: 'connect_error', reason: error.message });
       if (error.message === 'Playback client update required') {
         this.stopForTerminalDisconnect();
@@ -133,19 +148,20 @@ export class PlaybackSyncService {
         return;
       }
       if (error.message === 'Authentication required') {
+        this.sessionStore.requireRenewal();
         this.authenticationRequired.set(true);
         this.stopForTerminalDisconnect();
+        return;
       }
-      this.error.set(error.message === 'Authentication required'
-        ? 'Tu sesión terminó. Inicia sesión nuevamente.'
-        : 'No pudimos conectar tus dispositivos.');
+      this.sessionStore.deviceConnection.set('interrupted');
     });
     this.socket.on('playback:error', (error) => {
-      if (error.code === 'UNAUTHENTICATED') this.authenticationRequired.set(true);
+      if (!this.sessionStore.canUseRemote()) return;
+      if (error.code === 'UNAUTHENTICATED') {this.sessionStore.requireRenewal();this.authenticationRequired.set(true);return;}
       this.error.set(error.message);
     });
     this.socket.on('playback:snapshot', (snapshot) => {this.compactResyncRequested=false;this.receive(snapshot);});
-    this.socket.on('playback:state',state=>{const snapshot=this.expandSnapshot(state);if(snapshot)this.receive(snapshot);});
+    this.socket.on('playback:state',state=>{if(!this.sessionStore.canUseRemote())return;const snapshot=this.expandSnapshot(state);if(snapshot)this.receive(snapshot);});
     this.player.onEnded(() => {
       if (this.ownsLease() && this.appliedAnchor) {
         this.pendingEndInstance = this.appliedAnchor.playbackInstanceId;
@@ -198,13 +214,42 @@ export class PlaybackSyncService {
       });
     });
     this.connect();
+    this.modes.registerOnline(() => this.prepareLocal());
+    effect(()=>{
+      const renewed=this.sessionStore.renewed();
+      if(renewed && this.sessionStore.canUseRemote())untracked(()=>this.connect());
+    });
+    effect(()=>{
+      if(!this.sessionStore.canUseRemote())untracked(()=>this.disconnect());
+    });
   }
 
   public connect(): void {
+    if(!this.sessionStore.canUseRemote())return;
+    this.registerMediaSession();
     if (!this.socket.connected) this.socket.connect();
     if (!this.heartbeat) {
       this.heartbeat = setInterval(() => void this.publishState(), 10_000);
     }
+  }
+
+  public renewAccess(): void { this.sessionStore.requestRenewal(); }
+
+  private async prepareLocal(): Promise<void> {
+    const snapshot=this.snapshot(),owned=this.ownsLease(snapshot),position=Math.round(this.player.positionSeconds()*1000);
+    // A session may already have disconnected and cleared its snapshot. Fence
+    // the first returning epoch too, not just an ownership we can still see.
+    this.ownershipFence.set(snapshot?.leaseEpoch??Number.MAX_SAFE_INTEGER);
+    try{sessionStorage.setItem(`hirmos.local-exit:${this.deviceId}`,String(this.ownershipFence()));}catch{/* memory still fences old ownership */}
+    if(this.heartbeat)clearInterval(this.heartbeat);this.heartbeat=null;
+    this.player.pause();
+    try { if(owned && snapshot && this.socket.connected && this.sessionStore.canUseRemote()) {
+      await new Promise<void>(resolve=>{
+        const timer=setTimeout(resolve,1500);
+        this.socket.emit('playback:control',{commandId:crypto.randomUUID(),expectedRevision:snapshot.revision,
+          anchor:playbackAnchor(snapshot),action:'detach',positionMs:position},()=>{clearTimeout(timer);resolve();});
+      });
+    } } finally { this.disconnect(); }
   }
 
   public async select(track: Track): Promise<void> {
@@ -392,7 +437,7 @@ export class PlaybackSyncService {
     if (!snapshot) return;
     const anchor = playbackAnchor(snapshot);
     if (navigator.onLine === false) { this.error.set('Recupera la conexión antes de reintentar.'); return; }
-    if (this.authenticationRequired()) { this.error.set('Inicia sesión nuevamente para continuar.'); return; }
+    if (this.authenticationRequired()) { this.sessionStore.requestRenewal(); return; }
     if (this.unconfirmedFailure()) {
       await this.retryFailureReport();
       const current = this.snapshot();
@@ -456,7 +501,7 @@ export class PlaybackSyncService {
       positionMs: failure.positionMs, elapsedMs: failure.elapsedMs,
       ...(retryAfterMs === undefined ? {} : { retryAfterMs: Math.min(86_400_000, Math.max(0, retryAfterMs)) }) } };
     this.unconfirmedFailure.set(this.pendingFailure.failure);
-    if (code === 'authentication') this.authenticationRequired.set(true);
+    // A music-provider authorization failure does not prove the Hirmos session expired.
     await this.flushFailure();
   }
 
@@ -495,6 +540,10 @@ export class PlaybackSyncService {
   }
 
   public disconnect(): void {
+    this.participationGeneration++;
+    this.reconcileSequence++;
+    this.connected.set(false);
+    this.sessionStore.deviceConnection.set('unknown');
     this.notice.set(null);
     this.replacement.set(null);
     if (this.heartbeat) clearInterval(this.heartbeat);
@@ -519,13 +568,13 @@ export class PlaybackSyncService {
 
   public ownsLease(snapshot = this.snapshot()): boolean {
     if (!snapshot?.leaseExpiresAt) return false;
-    return snapshot.activeDeviceId === this.deviceId
+    return snapshot.leaseEpoch > this.ownershipFence() && snapshot.activeDeviceId === this.deviceId
       && Date.parse(snapshot.leaseExpiresAt) > Date.now();
   }
 
   public hasActiveRemotePlayer(snapshot = this.snapshot()): boolean {
     if (!snapshot?.activeDeviceId || !snapshot.leaseExpiresAt) return false;
-    return snapshot.activeDeviceId !== this.deviceId
+    return (snapshot.activeDeviceId !== this.deviceId || snapshot.leaseEpoch <= this.ownershipFence())
       && Date.parse(snapshot.leaseExpiresAt) > Date.now();
   }
 
@@ -539,12 +588,17 @@ export class PlaybackSyncService {
   }
 
   private receive(snapshot: PlaybackSnapshot): void {
+    if (!this.sessionStore.canUseRemote()) return;
     if (snapshot.protocolVersion !== PLAYBACK_PROTOCOL_VERSION) {
       this.stopForTerminalDisconnect();
       this.error.set('La versión del reproductor cambió. Recarga Hirmos.');
       return;
     }
     if (!acceptsSnapshot(this.snapshot(), snapshot)) return;
+    if(this.ownershipFence()===Number.MAX_SAFE_INTEGER){
+      this.ownershipFence.set(snapshot.leaseEpoch);
+      try{sessionStorage.setItem(`hirmos.local-exit:${this.deviceId}`,String(snapshot.leaseEpoch));}catch{/* memory fence */}
+    }
     if (this.snapshot()?.renderPhase === 'awaiting_interaction' && snapshot.renderPhase !== 'awaiting_interaction') {
       this.interactionAnchor = null;
       this.permissionStillBlocked.set(false);
@@ -756,14 +810,17 @@ export class PlaybackSyncService {
     emit: (ack: (result: PlaybackWireResult) => void) => void,
     interactive: boolean,
   ): Promise<PlaybackCommandResult | null> {
+    const generation = this.participationGeneration;
     const wireResult = await deliverWithAckRetry(emit, {
       attempts: 2,
       ackTimeoutMs: 6_000,
-      waitUntilReady: (timeoutMs) => this.waitUntilSocketReady(timeoutMs),
-      onTimeout: (_attempt, elapsedMs) => this.recordDiagnostic({
+      waitUntilReady: (timeoutMs) => generation === this.participationGeneration
+        ? this.waitUntilSocketReady(timeoutMs) : Promise.resolve(false),
+      onTimeout: (_attempt, elapsedMs) => generation === this.participationGeneration && this.recordDiagnostic({
         kind: 'ack_timeout', command, commandId, elapsedMs,
       }),
     });
+    if (generation !== this.participationGeneration || !this.sessionStore.canUseRemote()) return null;
     if (!wireResult) {
       if (interactive) {
         this.error.set('No pudimos confirmar el comando. Reconectando el hilo…');
@@ -809,6 +866,7 @@ export class PlaybackSyncService {
   }
 
   private waitUntilSocketReady(timeoutMs: number): Promise<boolean> {
+    if (!this.sessionStore.canUseRemote()) return Promise.resolve(false);
     if (this.socket.connected) return Promise.resolve(true);
     if (this.terminalSocketStop()) return Promise.resolve(false);
     return new Promise((resolve) => {
@@ -1042,6 +1100,12 @@ function playerInstanceId(userId: string | undefined): string {
   const created = crypto.randomUUID();
   sessionStorage.setItem(key, created);
   return created;
+}
+
+function readOwnershipFence(deviceId:string):number {
+  try { const value=Number(sessionStorage.getItem(`hirmos.local-exit:${deviceId}`)??-1);
+    return Number.isSafeInteger(value)&&value>=-1?value:-1;
+  } catch { return -1; }
 }
 
 function deviceName(): string {

@@ -34,7 +34,7 @@ describe('ImageCacheService', () => {
       }),
       touch: vi.fn(async () => undefined),
     } as unknown as CacheRepository;
-    const cache = new ImageCacheService(repository, new ObjectStore(root), 2);
+    const cache = new ImageCacheService(withLifecycle(repository), new ObjectStore(root), 2);
     await cache.initialize();
     const load = vi.fn(async () => imageMedia(new Uint8Array([1, 2, 3])));
 
@@ -55,7 +55,7 @@ describe('ImageCacheService', () => {
     const repository = {
       get: vi.fn(async () => null), put: vi.fn(), touch: vi.fn(),
     } as unknown as CacheRepository;
-    const cache = new ImageCacheService(repository, new ObjectStore(root));
+    const cache = new ImageCacheService(withLifecycle(repository), new ObjectStore(root));
     await cache.initialize();
 
     await expect(cache.get({
@@ -81,7 +81,7 @@ describe('ImageCacheService', () => {
       }),
       touch: vi.fn(async () => undefined),
     } as unknown as CacheRepository;
-    const cache = new ImageCacheService(repository, new ObjectStore(root), 1, {
+    const cache = new ImageCacheService(withLifecycle(repository), new ObjectStore(root), 1, {
       foregroundWaitMs: 5,
       random: () => 0,
     });
@@ -111,7 +111,7 @@ describe('ImageCacheService', () => {
     const repository = {
       get: vi.fn(async () => null), put: vi.fn(async () => undefined), touch: vi.fn(),
     } as unknown as CacheRepository;
-    const cache = new ImageCacheService(repository, new ObjectStore(root), 1, {
+    const cache = new ImageCacheService(withLifecycle(repository), new ObjectStore(root), 1, {
       foregroundWaitMs: 5,
       random: () => 0,
     });
@@ -148,7 +148,7 @@ describe('ImageCacheService', () => {
     const repository = {
       get: vi.fn(async () => null), put: vi.fn(async () => undefined), touch: vi.fn(),
     } as unknown as CacheRepository;
-    const cache = new ImageCacheService(repository, new ObjectStore(root), 2, {
+    const cache = new ImageCacheService(withLifecycle(repository), new ObjectStore(root), 2, {
       foregroundWaitMs: 2,
       random: () => 0,
     });
@@ -197,7 +197,7 @@ describe('ImageCacheService', () => {
       }),
       touch: vi.fn(async () => undefined),
     } as unknown as CacheRepository;
-    const cache = new ImageCacheService(repository, store, 1);
+    const cache = new ImageCacheService(withLifecycle(repository), store, 1);
     const load = vi.fn(async () => imageMedia(new Uint8Array([8, 9])));
 
     await cache.warm({ sourceId: 'source-a', remoteId: 'cover-a', size: 320, load });
@@ -211,6 +211,11 @@ describe('ImageCacheService', () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 });
+
+function withLifecycle(repository: CacheRepository): CacheRepository {
+  repository.withObjectMutation = async operation => operation(repository);
+  return repository;
+}
 
 function imageMedia(bytes: Uint8Array): SourceMedia {
   return {

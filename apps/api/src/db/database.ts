@@ -19,6 +19,12 @@ export function createDatabase(connectionString: string): Database {
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
   });
+  // Idle connections can fail independently of a query promise. Do not expose
+  // connection strings, SQL or credentials, and let pg replace the dead client.
+  pool.on('error', (error: Error & { code?: string }) => {
+    console.error(JSON.stringify({ database: { outcome: 'idle_connection_error',
+      code: typeof error.code === 'string' ? error.code.slice(0, 80) : 'UNKNOWN' } }));
+  });
 
   return {
     query: (text, values) => pool.query(text, values as unknown[] | undefined),

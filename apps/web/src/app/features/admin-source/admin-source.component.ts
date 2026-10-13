@@ -7,10 +7,11 @@ import type {
   TopSongsRefreshStatus, TopSongsRefreshTriggerResponse,
 } from '@hirmos/contracts';
 import { firstValueFrom } from 'rxjs';
+import { AccessStatusComponent } from '../../shared/access-status.component';
 
 @Component({
   selector: 'app-admin-source',
-  imports: [RouterLink, ReactiveFormsModule],
+  imports: [AccessStatusComponent, RouterLink, ReactiveFormsModule],
   templateUrl: './admin-source.component.html',
 })
 export class AdminSourceComponent {

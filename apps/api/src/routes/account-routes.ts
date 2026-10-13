@@ -35,6 +35,7 @@ export async function registerAccountRoutes(
       parsed.data.email,
       parsed.data.role,
       request.authSession!.response.user.id,
+      { actorSessionId: request.authSession!.id },
     );
     if (!created) {
       return reply.code(409).send({

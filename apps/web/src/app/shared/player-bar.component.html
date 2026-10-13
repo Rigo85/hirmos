@@ -1,0 +1,26 @@
+<footer class="player-bar" [class.player-bar--no-nav]="!bottomNavigation()" [attr.aria-label]="label()">
+  <ng-content select="[playerNotice]" />
+  @if (hasTrack()) {
+    <button class="mobile-player-open" type="button" (click)="expand.emit()" aria-label="Abrir Reproduciendo ahora"></button>
+    <div class="mobile-player-progress" role="progressbar" aria-label="Progreso de reproducción" aria-valuemin="0" aria-valuemax="100" [attr.aria-valuenow]="percent()"><span [style.width.%]="percent()"></span></div>
+  }
+  <div class="player-track">
+    @if (coverUrl()) { <img class="mini-cover" [src]="coverUrl()" alt=""> }
+    @else { <span class="mini-cover cover--amber">{{ hasTrack() ? title().slice(0, 2).toUpperCase() : 'HI' }}</span> }
+    <span><strong>{{ title() }}</strong><ng-content select="[playerMetadata]" /></span>
+    <ng-content select="[playerFavorite]" />
+  </div>
+  <div class="player-controls">
+    <div>
+      <button type="button" aria-label="Anterior" [disabled]="!canNavigate()" (click)="previous.emit()"><app-icon name="previous" /></button>
+      <button class="player-play" type="button" [disabled]="!canPlay()" [attr.title]="playHint()" [attr.aria-label]="playing() ? 'Pausar' : 'Reproducir'" (click)="toggle.emit()"><app-icon [name]="playing() ? 'pause' : 'play'" /></button>
+      <button type="button" aria-label="Siguiente" [disabled]="!canNavigate()" (click)="next.emit()"><app-icon name="next" /></button>
+    </div>
+    <div class="progress"><time>{{ time(position()) }}</time><input type="range" min="0" [max]="duration()" [step]="seekStep()" [value]="duration() ? position() : 0" [disabled]="!canSeek()" [attr.aria-label]="seekLabel()" (change)="seek.emit($event)"><time>{{ time(duration()) }}</time></div>
+  </div>
+  <div class="player-actions">
+    <ng-content select="[playerActions]" />
+    <button class="player-action" type="button" (click)="mute.emit()" [attr.aria-label]="muted() ? 'Activar sonido en este dispositivo' : 'Silenciar este dispositivo'" [attr.aria-pressed]="muted()" title="Sonido de este dispositivo"><app-icon [name]="muted() || volume() === 0 ? 'volume-muted' : 'volume'" /></button>
+    <input class="volume-control" type="range" min="0" max="1" [step]="volumeStep()" [value]="muted() ? 0 : volume()" (input)="volumeChange.emit($event)" aria-label="Volumen de este dispositivo" title="Volumen de este dispositivo">
+  </div>
+</footer>

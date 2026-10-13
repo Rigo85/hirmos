@@ -3,6 +3,7 @@ import { Injectable, InjectionToken, inject } from '@angular/core';
 import type { Track } from '@hirmos/contracts';
 
 type MediaMetadataFactory = (init: MediaMetadataInit) => MediaMetadata;
+export const HIRMOS_MEDIA_LOCAL_ONLY = new InjectionToken<boolean>('Local media artwork only',{providedIn:'root',factory:()=>false});
 
 export const HIRMOS_MEDIA_SESSION = new InjectionToken<MediaSession | null>(
   'Browser media session',
@@ -44,6 +45,7 @@ export class MediaSessionService {
   private readonly mediaSession = inject(HIRMOS_MEDIA_SESSION);
   private readonly metadataFactory = inject(HIRMOS_MEDIA_METADATA_FACTORY);
   private readonly document = inject(DOCUMENT);
+  private readonly localOnly = inject(HIRMOS_MEDIA_LOCAL_ONLY);
   private metadataKey: string | null = null;
   private published = false;
 
@@ -117,6 +119,7 @@ export class MediaSessionService {
   }
 
   private artwork(track: Track): MediaImage[] {
+    if(this.localOnly)return [];
     if (track.coverUrl) {
       try {
         return [{ src: new URL(track.coverUrl, this.document.baseURI).href }];

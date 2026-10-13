@@ -22,6 +22,8 @@ describe('PlayerShellComponent', () => {
           useValue: {
             session: signal({ user: { displayName: 'Oyente', role: 'user' } }),
             logout: vi.fn(),
+            needsRenewal:signal(false), local:{offline:signal(false),conflict:signal(false)},
+            remoteStatus:signal('available'),deviceConnection:signal('connected'),localOwner:signal('synthetic'),
           },
         },
         {

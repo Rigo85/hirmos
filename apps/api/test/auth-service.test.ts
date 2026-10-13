@@ -30,6 +30,16 @@ class FakeAuthRepository implements AuthRepository {
 }
 
 describe('AuthService', () => {
+  it('checks renewal owner before creating a session, even with valid credentials',async()=>{
+    const repository=new FakeAuthRepository();
+    repository.user={id:'ae15ac30-bd01-490d-813c-e4fc6cdf4308',email:'listener@example.test',displayName:'Listener',role:'user',disabledAt:null,passwordHash:await argon2.hash('synthetic-password')};
+    const service=new AuthService(repository),context={ipAddress:null,userAgent:null};
+    await expect(service.login('listener@example.test','synthetic-password',context,'11111111-1111-4111-8111-111111111111')).rejects.toBeInstanceOf(InvalidCredentialsError);
+    expect(repository.createdTokenHash).toBeNull();
+    await expect(service.login('listener@example.test','wrong',context,repository.user.id)).rejects.toBeInstanceOf(InvalidCredentialsError);
+    expect(repository.createdTokenHash).toBeNull();
+    expect((await service.login('listener@example.test','synthetic-password',context,repository.user.id)).session.user.id).toBe(repository.user.id);
+  });
   it('creates an opaque session after valid credentials', async () => {
     const repository = new FakeAuthRepository();
     repository.user = {

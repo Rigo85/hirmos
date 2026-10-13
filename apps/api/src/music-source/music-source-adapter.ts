@@ -122,6 +122,7 @@ export interface MusicSourceAdapter {
     artistId: string, artistName: string, signal?: AbortSignal,
   ): Promise<SourceTrack[]>;
   getStream(trackId: string, range?: string, signal?: AbortSignal): Promise<SourceMedia>;
+  getDownload(trackId: string, signal?: AbortSignal): Promise<SourceMedia>;
   getCoverArt(coverArtId: string, size?: number, signal?: AbortSignal): Promise<SourceMedia>;
   getLyrics(trackId: string, signal?: AbortSignal): Promise<SourceLyrics[]>;
   getTrack(trackId: string, signal?: AbortSignal): Promise<SourceTrack>;

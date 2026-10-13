@@ -2,15 +2,16 @@ import { TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import type { PlaybackSnapshot, Track } from '@hirmos/contracts';
-import { PlaybackSyncService } from './playback-sync.service';
+import { HIRMOS_SOCKET_FACTORY, PlaybackSyncService } from './playback-sync.service';
 import { AudioPlayerService } from './audio-player.service';
 import { MediaSessionService } from './media-session.service';
 import { SessionStore } from './session.store';
+import { PlaybackModeService } from './playback-mode.service';
 import { NEVER, of, throwError, Subject } from 'rxjs';
 
-const socket = vi.hoisted(() => ({ connected: true, on: vi.fn(), off: vi.fn(),
-  emit: vi.fn(), connect: vi.fn(), disconnect: vi.fn() }));
-vi.mock('socket.io-client', () => ({ io: () => socket }));
+const socket = { connected: true, on: vi.fn(), off: vi.fn(),
+  emit: vi.fn(), connect: vi.fn(), disconnect: vi.fn() };
+const socketFactory = vi.fn(() => socket);
 
 describe('PlaybackSyncService command consistency', () => {
   let service: PlaybackSyncService;
@@ -27,6 +28,7 @@ describe('PlaybackSyncService command consistency', () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    sessionStorage.removeItem('hirmos.local-exit:11111111-1111-4111-8111-111111111111');
     socket.connected = true;
     vi.stubGlobal('matchMedia', () => ({ matches: false }));
     sessionStorage.setItem('hirmos.player-id:user', '11111111-1111-4111-8111-111111111111');
@@ -34,14 +36,21 @@ describe('PlaybackSyncService command consistency', () => {
     current = snapshot();
     TestBed.configureTestingModule({ providers: [
       PlaybackSyncService,
+      { provide: HIRMOS_SOCKET_FACTORY, useValue: socketFactory },
+      {provide:PlaybackModeService,useValue:{registerOnline:vi.fn()}},
       { provide: HttpClient, useValue: { get: vi.fn(() => NEVER), post: vi.fn(() => of({tracks:[]})) } },
       { provide: AudioPlayerService, useValue: player },
-      { provide: SessionStore, useValue: { session: signal({ user: { id: 'user' } }) } },
+      { provide: SessionStore, useValue: { session: signal({ user: { id: 'user' } }),canUseRemote:signal(true),renewed:signal(0),requireRenewal:vi.fn(),requestRenewal:vi.fn(),deviceConnection:signal('unknown'),remoteStatus:signal('available') } },
       { provide: MediaSessionService, useValue: {
         registerHandlers: vi.fn(), synchronize: vi.fn(), clear: vi.fn(),
       } },
     ] });
     service = TestBed.inject(PlaybackSyncService);
+    expect(socketFactory).toHaveBeenCalledOnce();
+    expect(socketFactory).toHaveBeenCalledWith(expect.objectContaining({
+      path:'/socket.io', autoConnect:false, transports:['websocket','polling'],
+      auth:expect.objectContaining({protocolVersion:6,deviceId:'11111111-1111-4111-8111-111111111111'}),
+    }));
     // Use an empty queue for remote-command tests; local audio cases seed its
     // already-resolved metadata to avoid involving HTTP in this unit test.
     receive(current);
@@ -61,6 +70,31 @@ describe('PlaybackSyncService command consistency', () => {
     await flush(); expect(player.clear).toHaveBeenCalledOnce();
     await (service as unknown as { publishState(): Promise<void> }).publishState();
     expect(socket.emit.mock.calls.filter(([event]) => event === 'playback:update')).toHaveLength(0);
+  });
+  it('entering offline from a remote controller does not pause the other player',async()=>{
+    const leave=vi.mocked(TestBed.inject(PlaybackModeService).registerOnline).mock.calls[0][0];
+    await leave();expect(controls()).toHaveLength(0);expect(socket.disconnect).toHaveBeenCalled();
+  });
+  it('entering offline after auth already cleared the snapshot still fences old ownership',async()=>{
+    service.disconnect();
+    const leave=vi.mocked(TestBed.inject(PlaybackModeService).registerOnline).mock.calls[0][0];
+    await leave();service.connect();
+    receive({...current,activeDeviceId:'11111111-1111-4111-8111-111111111111'});await flush();
+    expect(service.ownsLease(service.snapshot())).toBe(false);
+    receive({...current,revision:2,leaseEpoch:2,activeDeviceId:'11111111-1111-4111-8111-111111111111'});await flush();
+    expect(service.ownsLease(service.snapshot())).toBe(true);
+  });
+  it('detaches an owned lease with a bounded wait and rejects the old ownership on return',async()=>{
+    receive({...current,activeDeviceId:'11111111-1111-4111-8111-111111111111'});await flush();
+    player.positionSeconds.set(42);
+    const leave=vi.mocked(TestBed.inject(PlaybackModeService).registerOnline).mock.calls[0][0];
+    const pending=leave();await flush();
+    expect(controls().at(-1)![1]).toMatchObject({action:'detach',positionMs:42000,anchor:{leaseEpoch:1}});
+    await vi.advanceTimersByTimeAsync(1500);await pending;
+    service.connect();receive({...current,revision:2,activeDeviceId:'11111111-1111-4111-8111-111111111111'});await flush();
+    expect(service.ownsLease(service.snapshot())).toBe(false);
+    receive({...current,revision:3,leaseEpoch:2,activeDeviceId:'11111111-1111-4111-8111-111111111111'});await flush();
+    expect(service.ownsLease(service.snapshot())).toBe(true);
   });
 
   it('starts the first pending prepared entry without rebuilding or replaying previous entries', async () => {
@@ -85,6 +119,54 @@ describe('PlaybackSyncService command consistency', () => {
     receive({ ...current, revision: 3, status: 'stopped', currentQueueItemId: null, playbackInstanceId: null });
     metadata.next({ ...track, id: 'late' }); metadata.complete(); await flush();
     expect(player.load).not.toHaveBeenCalled(); expect(player.resume).not.toHaveBeenCalled();
+  });
+
+  it('transient socket loss neither expires the session nor immediately stops buffered playback',()=>{
+    const store=TestBed.inject(SessionStore);
+    player.pause.mockClear();
+    socket.on.mock.calls.find(([event])=>event==='disconnect')![1]('transport close');
+    socket.on.mock.calls.find(([event])=>event==='connect_error')![1](new Error('websocket error'));
+    expect(store.requireRenewal).not.toHaveBeenCalled();
+    expect(store.deviceConnection()).toBe('interrupted');
+    expect(player.pause).not.toHaveBeenCalled();
+    expect(service.error()).toBeNull();
+  });
+
+  it('discards an old command acknowledgement even after remote access becomes available again',async()=>{
+    const pending=service.next();await flush();
+    const ack=controls()[0][2];
+    service.disconnect();
+    const priorError=service.error();
+    ack({status:'accepted',snapshot:{...current,revision:20},notice:'Old command'});
+    await pending;
+    expect(service.snapshot()).toBeNull();
+    expect(service.notice()).toBeNull();
+    expect(service.error()).toBe(priorError);
+  });
+
+  it('confirmed socket authentication failure has one presentation owner, not an error toast',()=>{
+    const store=TestBed.inject(SessionStore);
+    socket.on.mock.calls.find(([event])=>event==='connect_error')![1](new Error('Authentication required'));
+    expect(store.requireRenewal).toHaveBeenCalledOnce();
+    expect(service.authenticationRequired()).toBe(true);
+    expect(service.error()).toBeNull();
+  });
+
+  it('ignores late online snapshots, disconnects and auth errors after remote participation ends',async()=>{
+    const store=TestBed.inject(SessionStore);
+    (store.canUseRemote as import('@angular/core').WritableSignal<boolean>).set(false);
+    TestBed.tick();player.pause.mockClear();player.load.mockClear();player.resume.mockClear();
+    const state=service.snapshot();
+    receive({...current,revision:99});
+    socket.on.mock.calls.find(([event])=>event==='connect_error')![1](new Error('Authentication required'));
+    socket.on.mock.calls.find(([event])=>event==='playback:error')![1]({code:'UNAUTHENTICATED',message:'expired'});
+    socket.on.mock.calls.find(([event])=>event==='disconnect')![1]('io server disconnect');
+    await flush();
+    expect(service.snapshot()).toBe(state);
+    expect(store.requireRenewal).not.toHaveBeenCalled();
+    expect(player.pause).not.toHaveBeenCalled();
+    expect(player.load).not.toHaveBeenCalled();
+    expect(player.resume).not.toHaveBeenCalled();
   });
 
   it('aligns a stopped selection to zero without publishing paused or its previous position', async () => {
@@ -613,7 +695,7 @@ describe('PlaybackSyncService command consistency', () => {
 });
 
 function snapshot(): PlaybackSnapshot {
-  return { protocolVersion: 5, repeatMode: 'off', attempt: 0, renderPhase: 'unknown', failures: [], recoveryDeadline: null, sessionId: 'session', revision: 1, queueRevision: 1,
+  return { protocolVersion: 6, repeatMode: 'off', attempt: 0, renderPhase: 'unknown', failures: [], recoveryDeadline: null, sessionId: 'session', revision: 1, queueRevision: 1,
     playbackInstanceId: 'run-1', currentQueueItemId: 'item-1', currentTrackRef: null,
     status: 'playing', positionMs: 0, positionObservedAt: new Date().toISOString(),
     activeDeviceId: 'remote', leaseEpoch: 1,

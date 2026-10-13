@@ -3,6 +3,7 @@ import argon2 from 'argon2';
 import type { SessionResponse } from '@hirmos/contracts';
 import type { AuthRepository, PasswordUser } from './auth-repository.js';
 import type { SessionRevocationNotifier } from './session-revocation.js';
+import { IdentityChangeError } from './identity-write.js';
 
 const SESSION_BYTES = 32;
 const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -32,24 +33,29 @@ export class AuthService {
     email: string,
     password: string,
     context: { ipAddress: string | null; userAgent: string | null },
+    expectedUserId?: string,
   ): Promise<LoginResult> {
     const user = await this.repository.findPasswordUserByEmail(email.trim());
     const hash = user?.passwordHash ?? DUMMY_PASSWORD_HASH;
     const valid = await this.verifyPassword(hash, password);
 
-    if (!user || user.disabledAt || !valid) {
+    if (!user || user.disabledAt || !valid || (expectedUserId !== undefined && user.id !== expectedUserId)) {
       throw new InvalidCredentialsError();
     }
 
     const now = this.now();
     const expiresAt = new Date(now.getTime() + SESSION_LIFETIME_MS);
     const token = randomBytes(SESSION_BYTES).toString('base64url');
-    await this.repository.createSession({
+    try { await this.repository.createSession({
       userId: user.id,
       tokenHash: hashSessionToken(token),
       expiresAt,
+      expectedPasswordHash: hash,
       ...context,
-    });
+    }); } catch (error) {
+      if (error instanceof IdentityChangeError) throw new InvalidCredentialsError();
+      throw error;
+    }
 
     return {
       token,

@@ -13,6 +13,7 @@ export class MetadataWarmWorker {
   private loopTimer: ReturnType<typeof setTimeout> | null = null;
   private enqueueTimer: ReturnType<typeof setInterval> | null = null;
   private active: Promise<void> | null = null;
+  private enqueuing: Promise<void> | null = null;
   private stopping = false;
   private completedSinceLog = 0;
   private lastEnqueueAt = 0;
@@ -28,7 +29,11 @@ export class MetadataWarmWorker {
     this.stopping = false;
     this.loopTimer = setTimeout(() => this.scheduleRun(0), INITIAL_DELAY_MS);
     this.loopTimer.unref();
-    this.enqueueTimer = setInterval(() => void this.enqueue(), ENQUEUE_INTERVAL_MS);
+    this.enqueueTimer = setInterval(() => {
+      void this.enqueue().catch(error => {
+        this.logger.warn({ err: error }, 'Metadata warm enqueue failed');
+      });
+    }, ENQUEUE_INTERVAL_MS);
     this.enqueueTimer.unref();
   }
 
@@ -38,7 +43,7 @@ export class MetadataWarmWorker {
     if (this.enqueueTimer) clearInterval(this.enqueueTimer);
     this.loopTimer = null;
     this.enqueueTimer = null;
-    await this.active;
+    await Promise.allSettled([this.active, this.enqueuing]);
   }
 
   public async enqueueNow(): Promise<void> {
@@ -72,8 +77,14 @@ export class MetadataWarmWorker {
     }
   }
 
-  private async enqueue(): Promise<void> {
-    this.lastEnqueueAt = Date.now();
+  private enqueue(): Promise<void> {
+    if (this.stopping) return Promise.resolve();
+    return this.enqueuing ??= this.performEnqueue().then(() => {
+      this.lastEnqueueAt = Date.now();
+    }).finally(() => { this.enqueuing = null; });
+  }
+
+  private async performEnqueue(): Promise<void> {
     const queued = await this.repository.enqueueStaleArtists();
     if (queued > 0) {
       this.logger.info({ metadataWarm: { outcome: 'enqueued', queued,

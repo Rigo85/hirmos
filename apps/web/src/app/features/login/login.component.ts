@@ -1,16 +1,16 @@
 import { Component, inject, signal } from '@angular/core';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { SessionStore } from '../../core/session.store';
 
 @Component({
   selector: 'app-login',
-  imports: [ReactiveFormsModule],
+  imports: [ReactiveFormsModule,RouterLink],
   templateUrl: './login.component.html',
 })
 export class LoginComponent {
   private readonly route = inject(ActivatedRoute);
-  private readonly sessionStore = inject(SessionStore);
+  protected readonly sessionStore = inject(SessionStore);
 
   protected readonly submitting = signal(false);
   protected readonly errorMessage = signal<string | null>(null);

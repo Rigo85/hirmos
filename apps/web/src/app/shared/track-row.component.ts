@@ -7,10 +7,11 @@ import { FavoritesService } from '../core/favorites.service';
 import { AppIconComponent } from './app-icon.component';
 import { LazyCoverDirective } from './lazy-cover.directive';
 import { QueueMenuService } from '../core/queue-menu.service';
+import { DownloadBadgeComponent } from './download-badge.component';
 
 @Component({
   selector: 'li[appTrackRow]',
-  imports: [RouterLink, DecimalPipe, AppIconComponent, LazyCoverDirective],
+  imports: [RouterLink, DecimalPipe, AppIconComponent, LazyCoverDirective, DownloadBadgeComponent],
   host: {
     class: 'track-row',
     '[class.track-row--current]': 'isCurrent()',
@@ -43,6 +44,7 @@ import { QueueMenuService } from '../core/queue-menu.service';
     </div>
     <div class="track-row__trailing">
       <button class="icon-button track-row__playlist" type="button" (click)="queueMenu.open([track()])" [attr.aria-label]="'Opciones para ' + track().title" title="Cola y playlists"><app-icon name="more" /></button>
+      <app-download-badge [reference]="track().id" />
       @if (trailingText()) { <time>{{ trailingText() }}</time> }
       @else if (showDuration()) { <time>{{ track().durationMs / 60000 | number:'1.0-0' }} min</time> }
       <button class="track-row__favorite" [class.track-row__favorite--active]="isFavorite()" type="button" (click)="toggleFavorite()" [disabled]="favorites.isPending(track().id)" [attr.aria-label]="isFavorite() ? 'Quitar ' + track().title + ' de favoritos' : 'Añadir ' + track().title + ' a favoritos'" [attr.aria-pressed]="isFavorite()"><app-icon [name]="isFavorite() ? 'heart-filled' : 'heart'" /></button>

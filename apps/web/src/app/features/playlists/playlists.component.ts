@@ -6,8 +6,10 @@ import type { PlaylistCommand, PlaylistItem, PlaylistSummary } from '@hirmos/con
 import { PlaylistsService, playlistError } from '../../core/playlists.service';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { AppIconComponent } from '../../shared/app-icon.component';
+import { DownloadButtonComponent } from '../../shared/download-button.component';
+import { DownloadBadgeComponent } from '../../shared/download-badge.component';
 
-@Component({selector:'app-playlists',imports:[FormsModule,RouterLink,AppIconComponent],
+@Component({selector:'app-playlists',imports:[FormsModule,RouterLink,AppIconComponent,DownloadButtonComponent,DownloadBadgeComponent],
   templateUrl:'./playlists.component.html',styleUrl:'./playlists.component.scss'})
 export class PlaylistsComponent {
   protected readonly service=inject(PlaylistsService);

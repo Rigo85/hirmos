@@ -427,6 +427,11 @@ export class MusicSourceService {
     return this.adapterFor(source).getStream(remoteId, range, signal);
   }
 
+  public async download(reference: string, signal?: AbortSignal): Promise<SourceMedia> {
+    const { source, remoteId } = await this.resolveReference(reference);
+    return this.adapterFor(source).getDownload(remoteId, signal);
+  }
+
   public async cover(reference: string, size = 320, signal?: AbortSignal): Promise<SourceMedia> {
     const { source, remoteId } = await this.resolveReference(reference);
     const adapter = this.adapterFor(source);
@@ -661,6 +666,13 @@ export class MusicSourceService {
       tracks: await this.resolveTracks(userId, page),
       nextCursor: references.length > limit ? String(offset + page.length) : null,
     };
+  }
+
+  public async favoriteSelectionReferences(userId: string): Promise<string[]> {
+    if (!this.favorites) throw new MusicSourceUnavailableError('Favorites are not configured');
+    // One statement snapshots membership/order; no shifting offset pages.
+    // The extra row detects overflow instead of silently truncating at 5,000.
+    return this.favorites.trackReferences(userId, 5001, 0);
   }
 
   public async setTrackFavorite(userId: string, reference: string, favorite: boolean) {

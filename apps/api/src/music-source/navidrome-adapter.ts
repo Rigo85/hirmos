@@ -301,6 +301,28 @@ export class NavidromeAdapter implements MusicSourceAdapter {
     }, signal, { attemptTimeoutMs: 12_000, totalTimeoutMs: 25_000 });
   }
 
+  public async getDownload(trackId: string, signal?: AbortSignal): Promise<SourceMedia> {
+    const response = await fetchStreamingResponseWithRetry(this.fetchImplementation,
+      this.url('download', { id: trackId }), { headers: { 'accept-encoding': 'identity' } }, {
+        provider: 'opensubsonic', operation: 'download', signal,
+        attemptTimeoutMs: 5000, totalTimeoutMs: 12000, maxAttempts: 2,
+        telemetry: this.options.telemetry,
+      });
+    // Protocol errors may arrive with HTTP 200. Never persist XML/JSON/HTML as audio.
+    const type = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+    if (response.ok && (response.status !== 200 || !type
+      || !(type.startsWith('audio/') || type === 'application/octet-stream' || type === 'application/ogg')
+      || response.headers.has('content-range')
+      || ![null, 'identity'].includes(response.headers.get('content-encoding')))) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new SourceProtocolError(undefined);
+    }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+    }
+    return this.sourceMedia(response);
+  }
+
   public async getLyrics(trackId: string, signal?: AbortSignal): Promise<SourceLyrics[]> {
     const structured = await this.call<{
       lyricsList?: {

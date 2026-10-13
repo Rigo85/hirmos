@@ -1,5 +1,5 @@
 import { access } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
 import fastify, { type FastifyInstance } from 'fastify';
@@ -18,6 +18,12 @@ import { registerMusicSourceRoutes } from './routes/music-source-routes.js';
 import type { CatalogSyncControl } from './cache/catalog-sync-coordinator.js';
 import type { TopSongsRefreshControl } from './cache/top-songs-repository.js';
 import { registerPlaylistRoutes } from './routes/playlist-routes.js';
+import { registerSessionManagementRoutes } from './routes/session-management-routes.js';
+import { registerBackupRoutes } from './routes/backup-routes.js';
+import { registerDownloadRoutes } from './routes/download-routes.js';
+import {registerOfflineListenRoutes} from './routes/offline-listen-routes.js';
+import { registerAccountManagementRoutes } from './routes/account-management-routes.js';
+import type { SessionRevocationNotifier } from './auth/session-revocation.js';
 
 export interface BuildAppOptions {
   config: AppConfig;
@@ -28,6 +34,7 @@ export interface BuildAppOptions {
   catalogSync?: CatalogSyncControl;
   topSongsRefresh?: TopSongsRefreshControl;
   database?: Database;
+  revocations?: SessionRevocationNotifier;
   logger?: boolean;
 }
 
@@ -112,6 +119,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   }
 
   await registerAccountRoutes(app, options.accountService, rateLimiter);
+  await registerSessionManagementRoutes(app, options.config, options.database, options.revocations);
+  await registerBackupRoutes(app, options.database);
+  await registerDownloadRoutes(app, options.musicSourceService);
+  await registerOfflineListenRoutes(app,options.database);
+  await registerAccountManagementRoutes(app, options.config, options.database, options.accountService, rateLimiter, options.revocations);
   await registerPlaylistRoutes(app, options.database);
   await registerMusicSourceRoutes(
     app, options.musicSourceService, options.catalogSync, options.topSongsRefresh,
@@ -120,7 +132,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const webBuilt = await registerWebBuildIfAvailable(app);
 
   app.setNotFoundHandler(async (request, reply) => {
-    if (request.url.startsWith('/api/') || request.url.startsWith('/health/')) {
+    const path = request.url.split('?')[0] ?? '/';
+    if (request.url.startsWith('/api/') || request.url.startsWith('/health/') ||
+        /\.(?:js|css|json|webmanifest|woff2?|ico|png|svg)$/.test(path)) {
       return reply.code(404).send({
         code: 'NOT_FOUND',
         message: 'No se encontró el recurso solicitado.',
@@ -148,6 +162,11 @@ async function registerWebBuildIfAvailable(app: FastifyInstance): Promise<boolea
   }
   await app.register(fastifyStatic, {
     root,
+    setHeaders(response, path) {
+      if (['index.html', 'ngsw.json', 'ngsw-worker.js', 'hirmos-worker.js', 'safety-worker.js', 'manifest.webmanifest'].includes(basename(path))) {
+        response.header('Cache-Control', 'no-cache');
+      }
+    },
   });
   return true;
 }

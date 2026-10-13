@@ -10,7 +10,24 @@
   @if (error()) { <p class="form-error" role="alert">{{ error() }}</p> }
   @if (!loading() && !error()) {
     @switch (view()) {
-      @case ('albums') { <div class="album-grid album-grid--five">@for (album of albums(); track album.id) { <a class="album-card" [routerLink]="['/albums', album.id]"><div class="cover">@if (album.coverUrl) { <img [appLazyCover]="album.coverUrl" [coverSize]="320" [alt]="'Carátula de ' + album.name"> } @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }</div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small><em>{{ album.year || '—' }} · {{ album.songCount }} canciones</em></a> }</div> }
+      @case ('albums') {
+        <div class="album-grid album-grid--five">
+          @for (album of albums(); track album.id) {
+            <article class="album-card">
+              <a class="cover" [routerLink]="['/albums', album.id]" [attr.aria-label]="'Abrir álbum ' + album.name">
+                @if (album.coverUrl) { <img [appLazyCover]="album.coverUrl" [coverSize]="320" [alt]="'Carátula de ' + album.name"> }
+                @else { <span>{{ album.name.slice(0, 2).toUpperCase() }}</span> }
+              </a>
+              <strong><a [routerLink]="['/albums', album.id]">{{ album.name }}</a></strong>
+              <small>
+                @if (album.artistId) { <a [routerLink]="['/artists', album.artistId]">{{ album.artist }}</a> }
+                @else { {{ album.artist }} }
+              </small>
+              <em>{{ album.year || '—' }} · {{ album.songCount }} canciones</em>
+            </article>
+          }
+        </div>
+      }
       @case ('artists') { <div class="artist-grid">@for (artist of artists(); track artist.id) { <a class="artist-card" [routerLink]="['/artists', artist.id]">@if (artist.coverUrl) { <img [appLazyCover]="artist.coverUrl" [coverSize]="320" [alt]="artist.name"> } @else { <span>{{ artist.name.slice(0, 2).toUpperCase() }}</span> }<strong>{{ artist.name }}</strong><small>{{ artist.albumCount }} álbumes</small></a> }</div> }
       @case ('tracks') { <ol class="track-results">@for (track of tracks(); track track.id) { <li appTrackRow [track]="track" [showCover]="true" (playTrack)="play(track)"></li> }</ol> }
       @case ('genres') { <div class="genre-grid">@for (genre of genres(); track genre.name) { <a class="genre-card" [routerLink]="['/genres', genre.name]"><span>♫</span><strong>{{ genre.name }}</strong><small>{{ genre.albumCount }} álbumes · {{ genre.songCount }} canciones</small></a> }</div> }

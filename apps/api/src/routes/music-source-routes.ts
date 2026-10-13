@@ -320,6 +320,24 @@ export async function registerMusicSourceRoutes(
     ));
   });
 
+  app.get('/api/library/favorites/download-selection', async (request, reply) => {
+    reply.header('cache-control', 'private, no-store');
+    const denied = requireAuthentication(request, reply);
+    if (denied) return denied;
+    const owner = request.authSession!.response.user.id;
+    if (request.headers['x-hirmos-account-id'] !== owner) return reply.code(409).send({code:'ACCOUNT_CHANGED'});
+    if (!service) return notConfigured(request, reply);
+    return libraryResponse(request, reply, async () => {
+      const references = await service.favoriteSelectionReferences(owner);
+      if (references.length > 5000) {
+        reply.code(413);
+        return {code:'FAVORITES_LIMIT',message:'La selección admite hasta 5.000 favoritos. No se descargó una selección parcial.'};
+      }
+      reply.header('x-hirmos-account-id', owner);
+      return {references};
+    });
+  });
+
   app.put('/api/library/tracks/:reference/favorite', async (request, reply) => {
     const denied = requireAuthentication(request, reply);
     if (denied) return denied;
@@ -463,6 +481,7 @@ export async function registerMusicSourceRoutes(
   app.get('/api/music/covers/:reference', async (request, reply) => {
     const denied = requireAuthentication(request, reply);
     if (denied) return denied;
+    reply.header('x-hirmos-account-id', request.authSession!.response.user.id);
     if (!service) return notConfigured(request, reply);
     const { reference } = request.params as { reference: string };
     const { size: requestedSize } = request.query as { size?: string };
@@ -481,6 +500,8 @@ export async function registerMusicSourceRoutes(
   app.get('/api/music/tracks/:reference/lyrics', async (request, reply) => {
     const denied = requireAuthentication(request, reply);
     if (denied) return denied;
+    reply.header('x-hirmos-account-id', request.authSession!.response.user.id);
+    reply.header('cache-control', 'private, no-store');
     if (!service) return notConfigured(request, reply);
     const { reference } = request.params as { reference: string };
     try {

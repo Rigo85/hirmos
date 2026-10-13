@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { loginRequestSchema } from '@hirmos/contracts';
+import { loginRequestSchema, renewSessionRequestSchema } from '@hirmos/contracts';
 import type { AppConfig } from '../config.js';
 import { AuthService, InvalidCredentialsError } from '../auth/auth-service.js';
 import type { RateLimiter } from '../auth/rate-limiter.js';
@@ -21,13 +21,14 @@ export async function registerAuthRoutes(
 
   app.decorateRequest('authSession', null);
 
-  app.addHook('preHandler', async (request) => {
+  app.addHook('preHandler', async (request, reply) => {
+    if(request.url.startsWith('/api/auth/'))reply.header('cache-control','no-store');
     const token = request.cookies[cookieName];
     request.authSession = await options.authService.authenticate(token);
   });
 
-  app.post('/api/auth/login', async (request, reply) => {
-    const parsed = loginRequestSchema.safeParse(request.body);
+  const login = (renew: boolean) => async (request: FastifyRequest, reply: FastifyReply) => {
+    const parsed = (renew ? renewSessionRequestSchema : loginRequestSchema).safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({
         code: 'INVALID_REQUEST',
@@ -47,6 +48,13 @@ export async function registerAuthRoutes(
     );
     if (limited) return limited;
 
+    const expectedUserId = 'expectedUserId' in parsed.data ? parsed.data.expectedUserId as string : undefined;
+    // An already authenticated different account must not be silently replaced.
+    if (renew && request.authSession && request.authSession.response.user.id !== expectedUserId) {
+      return reply.code(409).send({ code: 'SESSION_ACCOUNT_CHANGED',
+        message: 'La sesión online pertenece a otra cuenta. No se cambió el perfil local.', requestId: request.id });
+    }
+
     try {
       const result = await options.authService.login(
         parsed.data.email,
@@ -55,6 +63,7 @@ export async function registerAuthRoutes(
           ipAddress: request.ip || null,
           userAgent: normalizeHeader(request.headers['user-agent']),
         },
+        expectedUserId,
       );
       setSessionCookie(reply, cookieName, result.token, result.session.expiresAt, options.config);
       return reply.send(result.session);
@@ -68,7 +77,9 @@ export async function registerAuthRoutes(
       }
       throw error;
     }
-  });
+  };
+  app.post('/api/auth/login', login(false));
+  app.post('/api/auth/renew', login(true));
 
   app.get('/api/auth/session', async (request, reply) => {
     if (!request.authSession) {
@@ -78,6 +89,14 @@ export async function registerAuthRoutes(
   });
 
   app.post('/api/auth/logout', async (request, reply) => {
+    const expected = (request.body as { expectedUserId?: unknown } | null)?.expectedUserId;
+    if (expected !== undefined && (typeof expected !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(expected))) {
+      return reply.code(400).send({ code: 'INVALID_REQUEST' });
+    }
+    if (expected && request.authSession && request.authSession.response.user.id !== expected) {
+      return reply.code(409).send({ code: 'SESSION_ACCOUNT_CHANGED' });
+    }
     if (request.authSession) {
       await options.authService.revoke(request.authSession.id);
     }
@@ -139,7 +158,7 @@ export function sessionCookieName(config: AppConfig): string {
   return config.NODE_ENV === 'production' ? COOKIE_PRODUCTION : COOKIE_DEVELOPMENT;
 }
 
-function setSessionCookie(
+export function setSessionCookie(
   reply: FastifyReply,
   name: string,
   token: string,

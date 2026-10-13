@@ -1,18 +1,343 @@
-<main class="admin-page">
-  <header class="admin-header"><a class="brand" routerLink="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>Hirmos</span></a><a class="quiet-button" routerLink="/">← Volver al reproductor</a></header>
+<main class="admin-page account-ui">
+  <header class="admin-header">
+    <a class="brand" routerLink="/"
+      ><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span
+      ><span>Hirmos</span></a
+    ><a class="quiet-button" routerLink="/">← Volver al reproductor</a>
+  </header>
+  <app-access-status />
   <section class="admin-content">
-    <p class="eyebrow">ADMINISTRACIÓN</p><h1>Invitar oyentes</h1><p class="muted">Cada persona tendrá una cuenta, cola y sesiones propias.</p>
-    <article class="source-card">
-      <div class="source-card__status"><span class="source-icon">＋</span><div><strong>Nueva invitación</strong><small>El enlace será válido durante 48 horas y solo podrá usarse una vez.</small></div></div>
-      <form class="source-form invite-form" [formGroup]="form" (ngSubmit)="submit()">
-        <div class="invite-form__row">
-          <div class="invite-form__field"><label for="invite-email">Correo</label><input id="invite-email" type="email" formControlName="email" autocomplete="email" placeholder="oyente@ejemplo.com" [attr.aria-invalid]="form.controls.email.touched && form.controls.email.invalid"></div>
-          <div class="invite-form__field"><label for="invite-role">Rol</label><select id="invite-role" formControlName="role"><option value="user">Oyente</option><option value="admin">Administrador</option></select></div>
-          <button class="primary-button primary-button--compact invite-form__submit" type="submit" [disabled]="submitting()">{{ submitting() ? 'Creando…' : 'Enviar invitación' }}</button>
+    <p class="eyebrow">ADMINISTRACIÓN</p>
+    <h1 tabindex="-1">Cuentas</h1>
+    <p class="muted">
+      Cada persona tiene su cuenta, cola y sesiones propias. Desactivar una cuenta no borra su
+      música ni su historial.
+    </p>
+    <nav class="account-tabs" aria-label="Gestión de cuentas">
+      <button
+        class="outline-button"
+        [class.active]="tab() === 'users'"
+        [attr.aria-pressed]="tab() === 'users'"
+        [disabled]="loading() || submitting()"
+        (click)="switchTab('users')"
+      >
+        Usuarios
+      </button>
+      <button
+        class="outline-button"
+        [class.active]="tab() === 'invitations'"
+        [attr.aria-pressed]="tab() === 'invitations'"
+        [disabled]="loading() || submitting()"
+        (click)="switchTab('invitations')"
+      >
+        Invitaciones
+      </button>
+      <button
+        class="outline-button"
+        [class.active]="tab() === 'events'"
+        [attr.aria-pressed]="tab() === 'events'"
+        [disabled]="loading() || submitting()"
+        (click)="switchTab('events')"
+      >
+        Actividad de seguridad
+      </button>
+    </nav>
+    @if (message()) {
+      <p
+        [class]="message()!.kind === 'success' ? 'success-message' : 'form-error'"
+        [attr.role]="message()!.kind === 'error' ? 'alert' : 'status'"
+      >
+        {{ message()!.text }}
+      </p>
+    }
+    @if (loadError()) {
+      <p class="form-error" role="alert">{{ loadError() }}</p>
+    }
+    @if (loading()) {
+      <p role="status">
+        Consultando
+        {{
+          tab() === 'users' ? 'usuarios' : tab() === 'invitations' ? 'invitaciones' : 'actividad'
+        }}…
+      </p>
+    }
+    @if (tab() === 'invitations') {
+      <article class="source-card">
+        <div class="source-card__status">
+          <span class="source-icon">＋</span>
+          <div>
+            <strong>Nueva invitación</strong
+            ><small>El enlace será válido durante 48 horas y solo podrá usarse una vez.</small>
+          </div>
         </div>
-        @if (form.controls.email.touched && form.controls.email.invalid) { <p class="field-error invite-form__feedback" role="alert">Ingresa un correo válido.</p> }
-        @if (message()) { <p [class]="message()!.kind === 'success' ? 'success-message' : 'form-error'" role="status">{{ message()!.text }}</p> }
-      </form>
-    </article>
+        <form class="source-form invite-form" [formGroup]="form" (ngSubmit)="submit()">
+          <fieldset
+            class="invite-form__row"
+            [disabled]="submitting()"
+            aria-label="Nueva invitación"
+          >
+            <div class="invite-form__field">
+              <label for="invite-email">Correo</label
+              ><input
+                id="invite-email"
+                type="email"
+                formControlName="email"
+                autocomplete="email"
+                placeholder="oyente@ejemplo.com"
+                [attr.aria-invalid]="form.controls.email.touched && form.controls.email.invalid"
+                [attr.aria-describedby]="
+                  form.controls.email.touched && form.controls.email.invalid
+                    ? 'invite-email-error'
+                    : null
+                "
+              />
+            </div>
+            <div class="invite-form__field">
+              <label for="invite-role">Rol</label
+              ><select id="invite-role" formControlName="role">
+                <option value="user">Oyente</option>
+                <option value="admin">Administrador</option>
+              </select>
+            </div>
+            <button
+              class="primary-button primary-button--compact invite-form__submit"
+              type="submit"
+              [disabled]="submitting()"
+            >
+              {{ submitting() ? 'Creando…' : 'Enviar invitación' }}
+            </button>
+          </fieldset>
+          @if (form.controls.email.touched && form.controls.email.invalid) {
+            <p id="invite-email-error" class="field-error invite-form__feedback" role="alert">
+              Ingresa un correo válido.
+            </p>
+          }
+        </form>
+      </article>
+    }
+    <div class="accounts-toolbar">
+      @if (tab() === 'users') {
+        <form (submit)="$event.preventDefault(); load(0)">
+          <label for="account-search">Buscar usuarios</label>
+          <div class="search-row">
+            <input
+              id="account-search"
+              type="search"
+              [formControl]="search"
+              maxlength="100"
+              placeholder="Nombre o correo"
+            /><button class="outline-button" [disabled]="loading() || submitting()">Buscar</button>
+          </div>
+        </form>
+      }
+      <button class="outline-button" [disabled]="loading() || submitting()" (click)="load()">
+        {{ loading() ? 'Actualizando…' : 'Actualizar' }}
+      </button>
+    </div>
+    <section [attr.aria-busy]="loading()" aria-label="Resultados" class="account-results">
+      @if (tab() === 'users') {
+        @for (user of users(); track user.id) {
+          <article class="account-row">
+            <div>
+              <h2>{{ user.displayName }}</h2>
+              <p>{{ user.email }}</p>
+              <small
+                >{{ user.role === 'admin' ? 'Administrador' : 'Oyente' }} ·
+                {{ user.disabled ? 'Desactivado' : 'Activo' }}</small
+              >
+            </div>
+            <button
+              class="outline-button"
+              [disabled]="loading() || submitting()"
+              (click)="ask({ kind: 'user', user })"
+              [attr.aria-label]="'Editar acceso de ' + user.email"
+            >
+              Editar acceso
+            </button>
+          </article>
+        } @empty {
+          @if (!loading() && loaded()) {
+            <p>No se encontraron usuarios.</p>
+          }
+        }
+      } @else if (tab() === 'invitations') {
+        @for (invitation of invitations(); track invitation.id) {
+          <article class="account-row">
+            <div>
+              <h2>{{ invitation.email }}</h2>
+              <p>
+                {{ invitation.role === 'admin' ? 'Administrador' : 'Oyente' }} ·
+                {{ invitation.expired ? 'Vencida' : 'Pendiente' }}
+              </p>
+              <small>Vence: {{ invitation.expiresAt | date: 'dd/MM/yyyy HH:mm' }}</small>
+            </div>
+            <div class="row-actions">
+              <button
+                class="outline-button"
+                [disabled]="loading() || submitting()"
+                (click)="ask({ kind: 'resend', invitation })"
+              >
+                Reenviar</button
+              ><button
+                class="outline-button"
+                [disabled]="loading() || submitting()"
+                (click)="ask({ kind: 'revoke', invitation })"
+              >
+                Revocar
+              </button>
+            </div>
+          </article>
+        } @empty {
+          @if (!loading() && loaded()) {
+            <p>No hay invitaciones pendientes o vencidas.</p>
+          }
+        }
+      } @else {
+        <p class="muted">
+          Registro de seguridad, no historial de escucha. No muestra contraseñas, tokens ni
+          direcciones IP.
+        </p>
+        @for (event of events(); track event.id) {
+          <article class="account-row">
+            <div>
+              <h2>{{ eventLabel(event.eventType) }}</h2>
+              <p>{{ event.subjectEmail || 'Cuenta no disponible' }}</p>
+              @if (event.actorEmail && event.actorEmail !== event.subjectEmail) {
+                <small>Realizado por {{ event.actorEmail }}</small>
+              }
+            </div>
+            <time>{{ event.occurredAt | date: 'dd/MM/yyyy HH:mm' }}</time>
+          </article>
+        } @empty {
+          @if (!loading() && loaded()) {
+            <p>No hay eventos en esta consulta.</p>
+          }
+        }
+      }
+    </section>
+    <footer class="pagination">
+      <button
+        class="outline-button"
+        [disabled]="offset() === 0 || loading() || submitting()"
+        (click)="load(offset() - 50)"
+      >
+        Anterior</button
+      ><span>Página {{ offset() / 50 + 1 }}</span
+      ><button
+        class="outline-button"
+        [disabled]="!hasMore() || loading() || submitting()"
+        (click)="load(offset() + 50)"
+      >
+        Siguiente
+      </button>
+    </footer>
   </section>
 </main>
+<dialog
+  #confirmation
+  class="account-dialog"
+  aria-labelledby="account-confirm-title"
+  [attr.aria-busy]="submitting()"
+  (cancel)="cancel($event)"
+>
+  @if (action(); as pending) {
+    <h2 id="account-confirm-title" tabindex="-1">
+      {{
+        pending.kind === 'user'
+          ? 'Editar acceso'
+          : pending.kind === 'resend'
+            ? 'Reenviar invitación'
+            : 'Revocar invitación'
+      }}
+    </h2>
+    @if (pending.kind === 'user') {
+      <p class="dialog-subject">{{ pending.user.email }}</p>
+      <p class="dialog-description" id="access-description">
+        Si cambia el acceso, se cerrarán sus sesiones. Debe quedar al menos un administrador activo.
+      </p>
+      <form
+        id="edit-account"
+        [formGroup]="edit"
+        (ngSubmit)="confirm()"
+        aria-describedby="access-description"
+      >
+        <fieldset class="form-fields" [disabled]="submitting()" aria-label="Acceso de la cuenta">
+          <div class="form-field">
+            <label for="edit-role">Rol</label
+            ><select id="edit-role" formControlName="role">
+              <option value="user">Oyente</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </div>
+          <label class="checkbox-label"
+            ><input type="checkbox" formControlName="disabled" />Desactivar cuenta</label
+          >
+          <div class="form-field">
+            <label for="admin-password">Tu contraseña de administrador</label
+            ><input
+              id="admin-password"
+              type="password"
+              autocomplete="current-password"
+              formControlName="currentPassword"
+              maxlength="1024"
+              [attr.aria-invalid]="
+                edit.controls.currentPassword.touched && edit.controls.currentPassword.invalid
+              "
+              [attr.aria-describedby]="
+                edit.controls.currentPassword.touched && edit.controls.currentPassword.invalid
+                  ? 'admin-password-error'
+                  : null
+              "
+            />
+            @if (edit.controls.currentPassword.touched && edit.controls.currentPassword.invalid) {
+              <p id="admin-password-error" class="form-error" role="alert">
+                Confirma tu contraseña actual.
+              </p>
+            }
+          </div>
+        </fieldset>
+      </form>
+    } @else {
+      <p class="dialog-subject">{{ pending.invitation.email }}</p>
+      <p class="dialog-description">
+        {{
+          pending.kind === 'resend'
+            ? 'Crearemos un enlace nuevo de un solo uso. El anterior dejará de funcionar.'
+            : 'El enlace dejará de funcionar. Un correo que ya esté enviándose podría llegar, pero no permitirá crear la cuenta.'
+        }}
+      </p>
+    }
+    @if (modalError()) {
+      <p class="form-error" role="alert" tabindex="-1">{{ modalError() }}</p>
+    }
+  }
+  <div class="dialog-actions">
+    <button
+      type="button"
+      autofocus
+      class="outline-button"
+      [disabled]="submitting()"
+      (click)="cancel()"
+    >
+      Cancelar</button
+    ><button
+      class="primary-button primary-button--compact"
+      [class.dialog-danger]="
+        action()?.kind === 'revoke' || (action()?.kind === 'user' && edit.controls.disabled.value)
+      "
+      type="button"
+      [disabled]="submitting()"
+      (click)="confirm()"
+    >
+      {{
+        submitting()
+          ? 'Procesando…'
+          : action()?.kind === 'user'
+            ? 'Guardar acceso'
+            : action()?.kind === 'resend'
+              ? 'Reenviar invitación'
+              : 'Revocar invitación'
+      }}
+    </button>
+  </div>
+</dialog>

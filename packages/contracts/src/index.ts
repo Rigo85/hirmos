@@ -17,6 +17,9 @@ export const loginRequestSchema = z.object({
   password: z.string().min(1).max(1024),
 });
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
+// Expected identity constrains renewal; it never replaces credential verification.
+export const renewSessionRequestSchema = loginRequestSchema.extend({ expectedUserId: z.uuid() }).strict();
+export type RenewSessionRequest = z.infer<typeof renewSessionRequestSchema>;
 
 export const passwordSchema = z
   .string()
@@ -52,6 +55,31 @@ export const sessionResponseSchema = z.object({
   expiresAt: z.iso.datetime(),
 });
 export type SessionResponse = z.infer<typeof sessionResponseSchema>;
+
+export const accountSessionSchema = z.object({
+  id: z.uuid(), current: z.boolean(), userAgent: z.string().nullable(),
+  createdAt: z.iso.datetime(), lastSeenAt: z.iso.datetime(), expiresAt: z.iso.datetime(),
+});
+export type AccountSession = z.infer<typeof accountSessionSchema>;
+export const accountSessionsResponseSchema = z.object({
+  sessions: z.array(accountSessionSchema), hasMore: z.boolean(),
+});
+export type AccountSessionsResponse = z.infer<typeof accountSessionsResponseSchema>;
+export const changePasswordRequestSchema = z.object({
+  currentPassword: z.string().min(1).max(1024), newPassword: passwordSchema,
+}).strict();
+export const manageUserRequestSchema = z.object({
+  role: userRoleSchema, disabled: z.boolean(), expectedUpdatedAt: z.iso.datetime(),
+  currentPassword: z.string().min(1).max(1024),
+}).strict();
+export type ManageUserRequest = z.infer<typeof manageUserRequestSchema>;
+export interface ManagedUser extends SessionUser { disabled: boolean; updatedAt: string; createdAt: string; }
+export interface ManagedInvitation { id: string; email: string; role: UserRole; createdAt: string; expiresAt: string; expired: boolean; }
+export interface AccountAuditEntry { id: string; eventType: string; occurredAt: string; subjectEmail: string | null; actorEmail: string | null; }
+export const accountSessionsQuerySchema = z.object({
+  offset: z.coerce.number().int().min(0).max(10000).default(0),
+}).strict();
+export const revokeAccountSessionsSchema = z.object({ scope: z.enum(['others', 'all']) }).strict();
 
 export const apiErrorSchema = z.object({
   code: z.string(),
@@ -293,6 +321,8 @@ export const trackListResponseSchema = z.object({
   nextCursor: z.string().nullable(),
 });
 export type TrackListResponse = z.infer<typeof trackListResponseSchema>;
+/** Complete, ordered favorite membership captured by one database read. */
+export interface FavoriteDownloadSelection { references: string[] }
 
 export const resolveTracksRequestSchema = z.object({
   references: z.array(z.string().min(1).max(2048)).min(1).max(500),
@@ -412,7 +442,7 @@ export const playbackSnapshotSchema = z.object({
   recoveryDeadline: z.iso.datetime().nullable().default(null),
   sessionId: z.uuid(),
   revision: z.number().int().nonnegative(),
-  protocolVersion: z.literal(5),
+  protocolVersion: z.literal(6),
   queueRevision: z.number().int().nonnegative(),
   queueManuallyEdited: z.boolean().optional(),
   // Retain the past/future boundary when removing the last current occurrence.
@@ -506,7 +536,7 @@ export interface ClientToServerEvents {
   'playback:control': (command: {
     commandId: string;
     expectedRevision: number;
-    action: 'play' | 'pause' | 'next' | 'previous' | 'seek' | 'retry';
+    action: 'play' | 'pause' | 'next' | 'previous' | 'seek' | 'retry' | 'detach';
     positionMs?: number;
     reason?: 'user' | 'ended';
     anchor: PlaybackAnchor;
@@ -517,3 +547,16 @@ export interface ClientToServerEvents {
     queueItemId: string;
   }, ack?: PlaybackCommandAck) => void;
 }
+export interface BackupStatusResponse {
+  checkedAt: string;
+  overdue: boolean;
+  thresholdHours: 36;
+  lastAttempt: {
+    startedAt: string;
+    finishedAt: string | null;
+    outcome: 'running' | 'succeeded' | 'failed' | 'warning' | 'interrupted';
+    phase: 'destination' | 'snapshot' | 'files' | 'verification' | 'retention' | 'complete';
+  } | null;
+  lastSuccess: { verifiedAt: string; snapshotAt: string; bytes: number; durationMs: number } | null;
+}
+export * from './offline-listens.js';

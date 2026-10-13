@@ -9,6 +9,10 @@ import { createDatabase } from '../apps/api/dist/db/database.js';
 import { loadConfig } from '../apps/api/dist/config.js';
 import { buildApp } from '../apps/api/dist/app.js';
 import { AuthService } from '../apps/api/dist/auth/auth-service.js';
+import { AccountService } from '../apps/api/dist/auth/account-service.js';
+import { PostgresAccountRepository } from '../apps/api/dist/auth/account-repository.js';
+import { AesGcmOutboxCipher } from '../apps/api/dist/mail/outbox-cipher.js';
+import { SessionRevocationNotifier } from '../apps/api/dist/auth/session-revocation.js';
 import { PostgresAuthRepository } from '../apps/api/dist/auth/auth-repository.js';
 import { MusicSourceService } from '../apps/api/dist/music-source/music-source-service.js';
 import { MusicSourceRepository } from '../apps/api/dist/music-source/music-source-repository.js';
@@ -31,15 +35,20 @@ const user = (await database.query(`INSERT INTO users(email,display_name,role)
   VALUES ('listener@example.test','Prueba aislada','user') ON CONFLICT (lower(email))
   DO UPDATE SET display_name=EXCLUDED.display_name RETURNING id`)).rows[0];
 await database.query(`INSERT INTO password_credentials(user_id,password_hash) VALUES ($1,$2)
-  ON CONFLICT(user_id) DO UPDATE SET password_hash=EXCLUDED.password_hash`,
+  ON CONFLICT(user_id) DO NOTHING`,
   [user.id, await argon2.hash('Fixture-only-2026!')]);
+const fixtureAdmin = (await database.query(`INSERT INTO users(email,display_name,role)
+  VALUES ('admin@example.test','Administración de prueba','admin') ON CONFLICT (lower(email))
+  DO UPDATE SET display_name=EXCLUDED.display_name RETURNING id`)).rows[0];
+await database.query(`INSERT INTO password_credentials(user_id,password_hash) VALUES ($1,$2)
+  ON CONFLICT(user_id) DO NOTHING`, [fixtureAdmin.id, await argon2.hash('Fixture-admin-2026!')]);
 
 const songs = ['Primera señal', 'Segunda señal', 'Tercera señal', 'Cuarta señal'].map((title, i) => ({
   id: String(i + 1), title, artist: 'Artista de prueba', artistId: 'artist', album: 'Prueba de continuidad',
-  albumId: 'album', duration: 180, track: i + 1, isDir: false, contentType: 'audio/wav', suffix: 'wav',
+  albumId: 'album', coverArt:'fixture-cover', duration: 180, track: i + 1, isDir: false, contentType: 'audio/wav', suffix: 'wav',
 }));
 const album = { id: 'album', name: 'Prueba de continuidad', artist: 'Artista de prueba',
-  artistId: 'artist', songCount: songs.length, duration: 720, year: 2026 };
+  artistId: 'artist', coverArt:'fixture-cover', songCount: songs.length, duration: 720, year: 2026 };
 const artist = { id: 'artist', name: 'Artista de prueba', albumCount: 1 };
 const wav = Buffer.alloc(44 + 180 * 16000 * 2);
 wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
@@ -68,7 +77,12 @@ const provider = createServer(async (req, res) => {
   const id = target.searchParams.get('id');
   requests.push({ operation, id, at: Date.now(), mode: fault.mode });
   if (requests.length > 100) requests.shift();
-  if (operation === 'stream') {
+  if(operation==='getCoverArt'){
+    // One-pixel raster, entirely synthetic; no artwork or external provider.
+    const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+    res.writeHead(200,{'content-type':'image/png','content-length':png.length});return res.end(png);
+  }
+  if (operation === 'stream' || operation === 'download') {
     if (fault.mode === 'unavailable') { res.writeHead(503, { 'retry-after': '10' }); return res.end(); }
     if (id === fault.track && fault.mode === 'missing') { res.writeHead(404); return res.end(); }
     if (id === fault.track && fault.mode === 'corrupt') {
@@ -93,6 +107,11 @@ const provider = createServer(async (req, res) => {
     getGenres: { genres: { genre: [] } }, getRandomSongs: { randomSongs: { song: songs } },
     search3: { searchResult3: { song: Number(target.searchParams.get('songOffset')) ? [] : songs, artist: [artist], album: [album] } },
     getSong: { song: songs.find(song => song.id === id) }, getLyrics: { lyrics: {} },
+    getLyricsBySongId: { lyricsList: { structuredLyrics: [{displayArtist:artist.name,
+      displayTitle:songs.find(song=>song.id===id)?.title,lang:'es',synced:true,
+      line:[{start:0,value:'Letra sintética guardada para la prueba offline.'},
+        {start:10000,value:'Segunda línea: puedes saltar aquí sin consultar la red.'},
+        {start:30000,value:'Tercera línea: la música y la cola permanecen locales.'}]}] } },
   }[operation];
   json({ 'subsonic-response': { status: 'ok', version: '1.16.1', type: 'fixture', ...data } });
 });
@@ -105,8 +124,12 @@ const music = new MusicSourceService(new MusicSourceRepository(database),
   new FavoriteRepository(database));
 await music.configure({ name: 'Fuente sintética', baseUrl: 'http://127.0.0.1:3314', username: 'fixture', password: 'fixture' });
 await music.syncCatalog();
-const auth = new AuthService(new PostgresAuthRepository(database));
-const app = await buildApp({ config, authService: auth, musicSourceService: music, database });
+const revocations = new SessionRevocationNotifier();
+const auth = new AuthService(new PostgresAuthRepository(database), undefined, revocations);
+// No SMTP worker: synthetic invitation messages stay in this disposable database.
+const accounts = new AccountService(new PostgresAccountRepository(database),
+  new AesGcmOutboxCipher(randomBytes(32).toString('base64url')), config.PUBLIC_ORIGIN, undefined, revocations);
+const app = await buildApp({ config, authService: auth, accountService: accounts, musicSourceService: music, database, revocations });
 // Opt-in, local-only instrumentation. No production bundle or audio behavior changes.
 if (process.env.HIRMOS_FIXTURE_AUDIO_PROBE === '1') {
   app.get('/__fixture/audio-probe.js', async (_request, reply) => reply.type('application/javascript')
@@ -125,7 +148,7 @@ if (process.env.HIRMOS_FIXTURE_AUDIO_PROBE === '1') {
   app.get('/albums/:id', observedPage);
 }
 const playback = new PlaybackService(new PlaybackRepository(database));
-const io = createSocketServer(app.server, config, auth, playback, undefined, app.log);
+const io = createSocketServer(app.server, config, auth, playback, revocations, app.log);
 const projector = new PlaybackActivityProjector(database, app.log);
 await app.listen({ host: config.HOST, port: config.PORT });
 projector.start();

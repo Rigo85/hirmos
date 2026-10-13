@@ -22,15 +22,11 @@ import { PlaybackSyncService } from '../core/playback-sync.service';
         }
       }
     } @else {
-      @let pending = playback.unconfirmedFailure();
-      @let authentication = playback.authenticationRequired();
+      @let pending = playback.authenticationRequired() && playback.unconfirmedFailure()?.code === 'authentication' ? null : playback.unconfirmedFailure();
       @let latest = active();
-      @if (pending || authentication || (latest && playback.dismissedFailure() !== latest.id)) {
+      @if (pending || (latest && playback.dismissedFailure() !== latest.id)) {
         <section aria-label="Incidencias de reproducción">
-          @if (authentication) {
-            <p role="status">Tu sesión terminó. Conservamos la cola y el último punto confirmado.</p>
-            <a href="/login">Iniciar sesión</a>
-          } @else if (pending) {
+          @if (pending) {
             <p role="status">El audio se detuvo en este dispositivo. La incidencia está pendiente de confirmar con el servidor.</p>
             @if (playback.ownsLease()) {
               <button type="button" (click)="playback.retryFailureReport()">Volver a confirmar</button>
@@ -40,9 +36,7 @@ import { PlaybackSyncService } from '../core/playback-sync.service';
           } @else if (latest) {
             <p role="status">{{ playback.failureText(latest) }}</p>
             <button type="button" (click)="playback.dismissedFailure.set(latest.id)">Cerrar aviso</button>
-            @if (latest.code === 'authentication') {
-              <a href="/login">Iniciar sesión</a>
-            } @else if (playback.snapshot()?.renderPhase === 'error' || playback.snapshot()?.renderPhase === 'blocked') {
+            @if (playback.snapshot()?.renderPhase === 'error' || playback.snapshot()?.renderPhase === 'blocked') {
               <span class="retry-action">
                 <button type="button" (click)="playback.retryCurrent()" [disabled]="playback.retryWaitSeconds() > 0">Reintentar pista actual</button>
                 @if (playback.retryWaitSeconds(); as seconds) {
@@ -82,6 +76,7 @@ export class PlaybackFailuresComponent {
     const snapshot = this.playback.snapshot();
     const latest = this.notices().at(-1);
     if (!snapshot || !latest) return null;
+    if (latest.code === 'authentication' && this.playback.authenticationRequired()) return null;
     if (['error', 'blocked'].includes(snapshot.renderPhase) && latest.trackRef === snapshot.currentTrackRef) return latest;
     if (latest.outcome === 'advanced' && ['loading','buffering'].includes(snapshot.renderPhase)) return latest;
     return null;

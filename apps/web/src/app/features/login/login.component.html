@@ -76,6 +76,9 @@
       <p class="invitation-note">
         ¿Aún no tienes cuenta? Hirmos funciona mediante invitaciones.
       </p>
+      @if(sessionStore.localOwner()){
+        <p><a routerLink="/local">Continuar con mis descargas locales</a></p>
+      }
     </div>
   </section>
 </main>

@@ -3,8 +3,9 @@ import type { QueuePlacement } from '@hirmos/contracts';
 import { QueueMenuService } from '../core/queue-menu.service';
 import { PlaybackSyncService } from '../core/playback-sync.service';
 import { PlaylistsService } from '../core/playlists.service';
+import { DownloadButtonComponent } from './download-button.component';
 
-@Component({selector:'app-queue-actions',template:`
+@Component({selector:'app-queue-actions',imports:[DownloadButtonComponent],template:`
   <dialog #menu aria-labelledby="queue-actions-title" (cancel)="closeMenu()">
     <h2 id="queue-actions-title">Opciones de música</h2>
     <p>{{ menuService.tracks()?.length }} canciones seleccionadas</p>
@@ -12,6 +13,7 @@ import { PlaylistsService } from '../core/playlists.service';
     <button (click)="add('next')" [disabled]="busy()">Reproducir a continuación <small>Justo después de la canción actual</small></button>
     <button (click)="add('end')" [disabled]="busy()">Añadir al final <small>Después de todo lo que queda</small></button>
     <button (click)="savePlaylist()" [disabled]="busy()">Añadir a playlist…</button>
+    @if(menuService.tracks();as tracks){<app-download-button [tracks]="tracks" />}
     <button (click)="closeMenu()" [disabled]="busy()">Cerrar</button>
   </dialog>
   <dialog #replace aria-labelledby="queue-replace-title" (cancel)="cancelReplacement()">

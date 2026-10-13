@@ -1,10 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, opendir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 export interface StoredObject {
   hash: string;
   relativePath: string;
+  byteLength: number;
+}
+
+export interface InventoryObject {
+  relativePath: string;
+  hash: string | null;
   byteLength: number;
 }
 
@@ -30,7 +36,8 @@ export class ObjectStore {
     try {
       const existing = await stat(target);
       if (existing.isFile() && existing.size === bytes.byteLength) {
-        return { hash, relativePath, byteLength: bytes.byteLength };
+        const actual = createHash('sha256').update(await readFile(target)).digest('hex');
+        if (actual === hash) return { hash, relativePath, byteLength: bytes.byteLength };
       }
     } catch { /* The content-addressed object is not present yet. */ }
 
@@ -62,9 +69,41 @@ export class ObjectStore {
   }
 
   public async remove(relativePath: string): Promise<void> {
+    // Refuse links in the owned tree, including a linked parent directory.
+    const parent = dirname(this.path(relativePath));
+    if (await realpath(parent) !== join(await realpath(this.root), dirname(relativePath))) {
+      throw new Error('Cache object parent is a symbolic link');
+    }
     await unlink(this.path(relativePath)).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error;
     });
+  }
+
+  /** Bounded traversal of owned files only. Unknown files count, but are never GC candidates. */
+  public async *inventory(): AsyncGenerator<InventoryObject> {
+    for (const directory of ['objects', 'tmp', 'quarantine']) {
+      yield* this.walk(directory, 0);
+    }
+  }
+
+  private async *walk(relative: string, depth: number): AsyncGenerator<InventoryObject> {
+    const path = join(this.root, relative);
+    const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (!info) return; // A concurrent atomic publication may have moved a temp file.
+    if (info.isSymbolicLink()) throw new Error('Symbolic link in cache inventory');
+    if (info.isDirectory()) {
+      if (depth > 4) throw new Error('Unexpected cache directory depth');
+      const entries = await opendir(path);
+      for await (const entry of entries) yield* this.walk(join(relative, entry.name), depth + 1);
+      return;
+    }
+    if (!info.isFile()) return;
+    const match = /^objects\/sha256\/([0-9a-f]{2})\/([0-9a-f]{2})\/([0-9a-f]{64})$/.exec(relative);
+    const hash = match && match[3]!.startsWith(match[1]! + match[2]!) ? match[3]! : null;
+    yield { relativePath: relative, hash, byteLength: info.size };
   }
 
   private path(relativePath: string): string {

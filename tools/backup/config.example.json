@@ -1,0 +1,7 @@
+{
+  "directory": "/mnt/data/hirmos-backups",
+  "mount": "/mnt/data",
+  "cacheDirectory": "/mnt/data/hirmos-cache",
+  "files": ["/etc/hirmos/runtime.env", "/etc/hirmos/database.env"],
+  "release": "set-at-deployment"
+}

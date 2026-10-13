@@ -127,8 +127,8 @@ async function project(db: Database, userId: string, fact: Transition, at: Date)
       && !(fact.name==='queue-edit' && fact.action!=='select') && fact.name!=='queue-remove') {
       await event(ended ? 'completed' : 'skipped', ended ? progress : before);
     }
-  } else if (instance && fact.name === 'control' && ['play', 'pause', 'seek'].includes(fact.action ?? '')) {
+  } else if (instance && fact.name === 'control' && ['play', 'pause', 'seek', 'detach'].includes(fact.action ?? '')) {
     const started = await db.query('SELECT id FROM playback_activity_instances WHERE id = $1 AND user_id = $2 AND started AND NOT closed', [instance, userId]);
-    if (started.rowCount) await event(fact.action === 'play' ? 'resumed' : fact.action === 'pause' ? 'paused' : 'seeked', after);
+    if (started.rowCount) await event(fact.action === 'play' ? 'resumed' : ['pause','detach'].includes(fact.action ?? '') ? 'paused' : 'seeked', after);
   }
 }

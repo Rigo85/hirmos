@@ -135,11 +135,14 @@ export class ImageCacheService {
       const contentType = upstream.contentType?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
       if (!contentType.startsWith('image/')) throw new Error('Music source did not return an image');
       const bytes = await readBounded(upstream.body, MAX_IMAGE_BYTES);
-      const stored = await this.store.put(bytes);
-      await this.repository.put({
-        namespace: 'image', key, sourceId: input.sourceId, remoteEntityId: input.remoteId,
-        variant: String(input.size), objectHash: stored.hash, relativePath: stored.relativePath,
-        contentType, byteLength: stored.byteLength,
+      const stored = await this.repository.withObjectMutation(async (repository) => {
+        const object = await this.store.put(bytes);
+        await repository.put({
+          namespace: 'image', key, sourceId: input.sourceId, remoteEntityId: input.remoteId,
+          variant: String(input.size), objectHash: object.hash, relativePath: object.relativePath,
+          contentType, byteLength: object.byteLength,
+        });
+        return object;
       });
       return mediaFromBytes(bytes, contentType, stored.hash);
     } catch (error) {

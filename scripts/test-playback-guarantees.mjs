@@ -79,7 +79,7 @@ try {
     assert.equal(await repo.registerDevice({ userId, deviceId, name: 'Fixture', type: 'desktop' }), true);
   }
   let s = await repo.snapshot(user);
-  assert.equal(s.protocolVersion, 5);
+  assert.equal(s.protocolVersion, 6);
   assert.equal(s.playbackInstanceId, null);
   const select = { userId: user, deviceId: desktop, commandId: randomUUID(), expectedRevision: s.revision,
     sourceId: source, remoteTrackIds: ['a', 'b', 'c'], selectedIndex: 0, contextType: 'album', contextRef: 'fixture' };
@@ -416,6 +416,23 @@ async function failureChecks(repo, db, projector, {user,desktop,phone,source}) {
   assert.equal(tooSoon.status,'conflict');
   assert.equal(tooSoon.error.code,'RETRY_LATER');
   check('the durable retry cooldown also applies to another client, not just its UI');
+  await begin(['local-a','local-b']);
+  const original=s;
+  const detach={userId:user,deviceId:desktop,commandId:randomUUID(),expectedRevision:s.revision,
+    anchor:anchor(s),action:'detach',positionMs:42000};
+  assert.equal((await repo.control({...detach,deviceId:phone})).status,'conflict');
+  assert.equal((await repo.control({...detach,anchor:{...anchor(s),leaseEpoch:s.leaseEpoch-1}})).status,'conflict');
+  assert.equal((await repo.control({...detach,expectedRevision:s.revision-1})).status,'conflict');
+  const detached=await repo.control(detach);assert.equal(detached.status,'accepted');s=detached.snapshot;
+  assert.equal(s.activeDeviceId,null);assert.equal(s.leaseExpiresAt,null);assert.equal(s.status,'paused');
+  assert.equal(s.positionMs,42000);assert.equal(s.leaseEpoch,original.leaseEpoch+1);
+  assert.deepEqual(s.queue,original.queue);assert.equal(s.queueRevision,original.queueRevision);
+  assert.equal(s.playbackInstanceId,original.playbackInstanceId);
+  assert.equal((await repo.control(detach)).status,'duplicate');
+  assert.equal((await repo.update({userId:user,deviceId:desktop,commandId:randomUUID(),expectedRevision:s.revision,
+    anchor:anchor(original),leaseEpoch:original.leaseEpoch,status:'playing',positionMs:43000})).status,'conflict');
+  assert.equal((await repo.snapshot(user)).activeDeviceId,null);
+  check('offline detach is owner-only, anchored, idempotent and preserves queue/position while fencing late online progress');
 }
 
 async function socketChecks(service, user, other, foreignDevice) {
@@ -445,8 +462,9 @@ async function socketChecks(service, user, other, foreignDevice) {
     await rejected(client('not-authenticated', 2), 'Authentication required');
     await rejected(client(user, 3), 'Playback client update required');
     await rejected(client(user, 4), 'Playback client update required');
-    await rejected(client(user, 5, foreignDevice), 'Device unavailable');
-    const socket = client(user, 5);
+    await rejected(client(user, 5), 'Playback client update required');
+    await rejected(client(user, 6, foreignDevice), 'Device unavailable');
+    const socket = client(user, 6);
     const initial = new Promise(resolve => socket.once('playback:snapshot', resolve));
     socket.connect();
     const s = await timed(initial);
@@ -476,7 +494,7 @@ async function socketChecks(service, user, other, foreignDevice) {
     const state=await stateEvent;assert.equal('queue' in state,false);assert.equal(state.queueRevision,claimed.snapshot.queueRevision);
     const full=timed(new Promise(resolve=>socket.once('playback:snapshot',resolve)));
     socket.emit('playback:sync',{lastRevision:state.revision});assert.ok(Array.isArray((await full).queue));
-    const remote=client(user,5);
+    const remote=client(user,6);
     const remoteInitial=timed(new Promise(resolve=>remote.once('playback:snapshot',resolve)));
     remote.connect();const remoteBefore=await remoteInitial;
     const ownerBroadcast=timed(new Promise(resolve=>socket.once('playback:snapshot',resolve)));

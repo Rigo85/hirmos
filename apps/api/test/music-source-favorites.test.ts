@@ -10,6 +10,13 @@ import type { SourceCredentialCipher } from '../src/music-source/source-credenti
 import { encodeTrackReference } from '../src/music-source/track-reference.js';
 
 describe('MusicSourceService favorites', () => {
+  it('captures complete favorite membership in one owner-scoped query without provider lookup',async()=>{
+    const refs=Array.from({length:5001},(_,i)=>encodeTrackReference(sourceId,String(i)));
+    const trackReferences=vi.fn(async()=>refs),getTrack=vi.fn();
+    const service=createService({getTrack} as unknown as MusicSourceAdapter,{trackReferences} as unknown as FavoriteRepository);
+    expect(await service.favoriteSelectionReferences('user-a')).toEqual(refs);
+    expect(trackReferences).toHaveBeenCalledExactlyOnceWith('user-a',5001,0);expect(getTrack).not.toHaveBeenCalled();
+  });
   it('overrides the service account star with the authenticated user favorite', async () => {
     const adapter = { search: vi.fn(async () => ({
       artists: [], albums: [], tracks: [track()], nextCursor: null,

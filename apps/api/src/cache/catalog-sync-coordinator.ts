@@ -18,6 +18,7 @@ export interface CatalogSyncControl {
 
 export class CatalogSyncCoordinator implements CatalogSyncControl {
   private current: Promise<CatalogSyncCompletion> | null = null;
+  private stopping = false;
   private afterSync: ((result: CatalogSyncResult) => Promise<void>) | undefined;
   private currentStatus: CatalogSyncStatus = {
     status: 'idle',
@@ -43,6 +44,7 @@ export class CatalogSyncCoordinator implements CatalogSyncControl {
   }
 
   public trigger(): CatalogSyncTrigger {
+    if (this.stopping) throw new Error('Catalog sync is shutting down');
     if (this.current) {
       return { started: false, completion: this.current };
     }
@@ -60,6 +62,11 @@ export class CatalogSyncCoordinator implements CatalogSyncControl {
     // must never create an unhandled rejection if the request has already ended.
     void completion.catch(() => undefined);
     return { started: true, completion };
+  }
+
+  public async stop(): Promise<void> {
+    this.stopping = true;
+    await this.current?.catch(() => undefined);
   }
 
   private async run(startedAt: string): Promise<CatalogSyncCompletion> {

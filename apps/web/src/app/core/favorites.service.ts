@@ -1,47 +1,61 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import type { FavoriteTrackResponse, Track } from '@hirmos/contracts';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, timeout } from 'rxjs';
+import { SessionStore } from './session.store';
 
 @Injectable({ providedIn: 'root' })
 export class FavoritesService {
   private readonly http = inject(HttpClient);
-  private readonly overrides = signal<Record<string, boolean>>({});
-  private readonly pendingReferences = signal<Set<string>>(new Set());
-  public readonly error = signal<string | null>(null);
+  private readonly session = inject(SessionStore);
+  // A new identity/access context gets fresh optimistic state synchronously,
+  // even before Angular has run effects. Old completions only see their scope.
+  private readonly scope = computed(() => ({
+    session: this.session.session(), owner: this.session.localOwner(),
+    allowed: this.session.canUseRemote(),
+    overrides: signal<Record<string, boolean>>({}),
+    pending: signal<Set<string>>(new Set()),
+    error: signal<string | null>(null),
+  }));
+  public get error() { return this.scope().error; }
 
   public isFavorite(track: Track): boolean {
-    return this.overrides()[track.id] ?? track.favorite;
+    return this.scope().overrides()[track.id] ?? track.favorite;
   }
 
   public isPending(reference: string): boolean {
-    return this.pendingReferences().has(reference);
+    return this.scope().pending().has(reference);
   }
 
   public async toggle(track: Track): Promise<boolean | null> {
-    if (this.isPending(track.id)) return null;
-    const previous = this.overrides()[track.id];
+    const generation = this.session.requestGeneration();
+    const scope = this.scope();
+    if (!scope.allowed || !scope.owner || this.isPending(track.id)) return null;
+    const current = () => generation === this.session.requestGeneration() && this.scope() === scope;
+    const previous = scope.overrides()[track.id];
     const favorite = !this.isFavorite(track);
-    this.overrides.update((values) => ({ ...values, [track.id]: favorite }));
-    this.pendingReferences.update((values) => new Set(values).add(track.id));
-    this.error.set(null);
+    scope.overrides.update((values) => ({ ...values, [track.id]: favorite }));
+    scope.pending.update((values) => new Set(values).add(track.id));
+    scope.error.set(null);
     try {
       const result = await firstValueFrom(this.http.put<FavoriteTrackResponse>(
         `/api/library/tracks/${encodeURIComponent(track.id)}/favorite`, { favorite },
-      ));
-      this.overrides.update((values) => ({ ...values, [track.id]: result.favorite }));
+      ).pipe(timeout(10_000)));
+      if (!current()) return null;
+      scope.overrides.update((values) => ({ ...values, [track.id]: result.favorite }));
       return result.favorite;
     } catch {
-      this.overrides.update((values) => {
+      if (!current()) return null;
+      scope.overrides.update((values) => {
         const restored = { ...values };
         if (previous === undefined) delete restored[track.id];
         else restored[track.id] = previous;
         return restored;
       });
-      this.error.set('No pudimos actualizar tus favoritos.');
+      scope.error.set('No pudimos actualizar tus favoritos.');
       return null;
     } finally {
-      this.pendingReferences.update((values) => {
+      scope.pending.update((values) => {
         const next = new Set(values); next.delete(track.id); return next;
       });
     }

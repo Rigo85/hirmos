@@ -57,15 +57,15 @@ const updateSchema = commandBase.extend({
 });
 const controlSchema = commandBase.extend({
   anchor: playbackAnchorSchema,
-  action: z.enum(['play', 'pause', 'next', 'previous', 'seek', 'retry']),
+  action: z.enum(['play', 'pause', 'next', 'previous', 'seek', 'retry', 'detach']),
   positionMs: z.number().int().nonnegative().max(86_400_000).optional(),
   reason: z.enum(['user', 'ended']).optional(),
 }).superRefine((value, context) => {
   if (value.reason === 'ended' && (value.action !== 'next' || value.positionMs === undefined)) {
     context.addIssue({ code: 'custom', message: 'ended requires next and a final position' });
   }
-  if (value.action === 'seek' && value.positionMs === undefined) {
-    context.addIssue({ code: 'custom', message: 'positionMs is required for seek' });
+  if (['seek','detach'].includes(value.action) && value.positionMs === undefined) {
+    context.addIssue({ code: 'custom', message: 'positionMs is required for seek/detach' });
   }
 });
 const queueRemoveSchema = commandBase.extend({ queueItemId: z.uuid() });
@@ -92,7 +92,19 @@ export function createSocketServer(
     },
   });
 
-  io.use(async (socket, next) => {
+  let closing = false;
+  const pending = new Set<Promise<unknown>>();
+  function track(operation: () => Promise<unknown>): void {
+    if (closing) return;
+    const task = Promise.resolve().then(operation);
+    pending.add(task);
+    void task.catch(error => logger?.warn({ err: error }, 'Playback socket task failed'))
+      .finally(() => { pending.delete(task); });
+  }
+
+  io.use((socket, next) => {
+    if (closing) return next(new Error('Service unavailable'));
+    track(async () => {
     try {
       if (!authService || !playbackService) return next(new Error('Service unavailable'));
       const token = parseCookie(socket.handshake.headers.cookie, sessionCookieName(config));
@@ -115,19 +127,21 @@ export function createSocketServer(
       socket.data.sessionToken = token!;
       next();
     } catch {
-      next(new Error('Authentication required'));
+      next(new Error('Service unavailable'));
     }
+    });
   });
 
   io.on('connection', (socket) => {
+    if (closing) { socket.disconnect(true); return; }
     logger?.info({ playbackSocket: {
       event: 'connected', socketId: socket.id, deviceId: socket.data.deviceId,
       transport: socket.conn.transport.name,
     } }, 'Playback socket connected');
     const room = `user:${socket.data.userId}`;
     void socket.join(room);
-    void emitSnapshot();
-    const sessionCheck = setInterval(() => void ensureSession(), 15_000);
+    track(emitSnapshot);
+    const sessionCheck = setInterval(() => track(ensureSession), 15_000);
     socket.once('disconnect', (reason) => {
       clearInterval(sessionCheck);
       logger?.info({ playbackSocket: {
@@ -135,8 +149,8 @@ export function createSocketServer(
       } }, 'Playback socket disconnected');
     });
 
-    socket.on('playback:sync', () => void ensureSession().then((valid) => {
-      if (valid) return emitSnapshot();
+    socket.on('playback:sync', () => track(async () => {
+      if (await ensureSession()) await emitSnapshot();
     }));
     socket.on('playback:diagnostic', (diagnostic) => {
       const parsed = playbackClientDiagnosticSchema.safeParse(diagnostic);
@@ -179,7 +193,14 @@ export function createSocketServer(
       }
     }
 
-    async function execute<T>(
+    function execute<T>(
+      commandName: string, schema: z.ZodType<T>, command: unknown,
+      ack: PlaybackCommandAck | undefined, action: (value: T) => Promise<PlaybackCommandResult>,
+    ): void {
+      track(() => performCommand(commandName, schema, command, ack, action));
+    }
+
+    async function performCommand<T>(
       commandName: string,
       schema: z.ZodType<T>,
       command: unknown,
@@ -254,11 +275,20 @@ export function createSocketServer(
     }
 
     async function ensureSession(): Promise<boolean> {
-      const session = await authService?.authenticate(socket.data.sessionToken);
-      if (session?.id === socket.data.sessionId) return true;
-      emitError('UNAUTHENTICATED', 'La sesión terminó. Inicia sesión nuevamente.');
-      socket.disconnect(true);
-      return false;
+      try {
+        const session = await authService?.authenticate(socket.data.sessionToken);
+        if (!socket.connected) return false;
+        if (session?.id === socket.data.sessionId) return true;
+        emitError('UNAUTHENTICATED', 'La sesión terminó. Inicia sesión nuevamente.');
+        socket.disconnect(true);
+        return false;
+      } catch (error) {
+        // Storage being unavailable is not proof of revocation. Deny this
+        // operation, preserve the session and let the next check try again.
+        logger?.warn({ err: error, socketId: socket.id }, 'Playback session check unavailable');
+        if (socket.connected) emitError('PLAYBACK_UNAVAILABLE', 'No pudimos comprobar tu sesión. Reintentaremos la conexión.');
+        return false;
+      }
     }
 
     function emitError(code: string, message: string): void {
@@ -268,12 +298,18 @@ export function createSocketServer(
 
   const stopSessionListener = revocations?.onSession((sessionId) => {
     for (const socket of io.sockets.sockets.values()) {
-      if (socket.data.sessionId === sessionId) socket.disconnect(true);
+      if (socket.data.sessionId === sessionId) {
+        socket.emit('playback:error', { code: 'UNAUTHENTICATED', message: 'Tu sesión se cerró. Inicia sesión nuevamente.' });
+        socket.disconnect(true);
+      }
     }
   });
   const stopUserListener = revocations?.onUser((userId) => {
     for (const socket of io.sockets.sockets.values()) {
-      if (socket.data.userId === userId) socket.disconnect(true);
+      if (socket.data.userId === userId) {
+        socket.emit('playback:error', { code: 'UNAUTHENTICATED', message: 'Tu sesión se cerró. Inicia sesión nuevamente.' });
+        socket.disconnect(true);
+      }
     }
   });
   io.engine.once('close', () => {
@@ -281,7 +317,12 @@ export function createSocketServer(
     stopUserListener?.();
   });
 
-  return io;
+  return Object.assign(io, {
+    async drain(): Promise<void> {
+      closing = true;
+      await Promise.allSettled([...pending]);
+    },
+  });
 }
 
 function commandIdOf(value: unknown): string | undefined {

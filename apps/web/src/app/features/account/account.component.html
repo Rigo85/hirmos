@@ -1,0 +1,129 @@
+<section class="account-page account-ui" aria-labelledby="account-title">
+  <header>
+    <p class="eyebrow">TU ESPACIO · PRIVADO</p>
+    <h1 id="account-title" tabindex="-1">Mi cuenta</h1>
+    <p class="identity">
+      {{ store.session()?.user?.displayName || store.local.value()?.user?.displayName }} <span>{{ store.session()?.user?.email || store.local.value()?.user?.email }}</span>
+    </p>
+  </header>
+  <section aria-labelledby="sessions-title" class="sessions-card">
+    <div class="sessions-heading">
+      <div>
+        <h2 id="sessions-title">Sesiones abiertas</h2>
+        <p class="muted">Una sesión puede incluir varias pestañas del mismo navegador.</p>
+      </div>
+      <button class="outline-button" [disabled]="loading() || busy()" (click)="load()">
+        {{ loading() ? 'Actualizando…' : 'Actualizar' }}
+      </button>
+    </div>
+    <p class="muted">
+      La actividad es aproximada. Brave puede aparecer como Chrome / Chromium; no identifica un
+      equipo de forma única.
+    </p>
+    @if (error()) {
+      <p role="alert" class="form-error">{{ error() }}</p>
+    }
+    @if (notice()) {
+      <p role="status" class="success-message">{{ notice() }}</p>
+    }
+    @if (!loaded() && loading()) {
+      <p role="status">Consultando sesiones…</p>
+    }
+    <ul class="session-list">
+      @for (session of sessions(); track session.id) {
+        <li [class.current]="session.current">
+          <app-icon name="device" />
+          <div class="session-info">
+            <h3>
+              {{ browser(session.userAgent) }}
+              @if (session.current) {
+                <span class="current-label">Esta sesión</span>
+              }
+            </h3>
+            <dl>
+              <div>
+                <dt>Última actividad</dt>
+                <dd>{{ session.lastSeenAt | date: 'dd/MM/yyyy HH:mm' }}</dd>
+              </div>
+              <div>
+                <dt>Inicio</dt>
+                <dd>{{ session.createdAt | date: 'dd/MM/yyyy HH:mm' }}</dd>
+              </div>
+              <div>
+                <dt>Vence</dt>
+                <dd>{{ session.expiresAt | date: 'dd/MM/yyyy HH:mm' }}</dd>
+              </div>
+            </dl>
+          </div>
+          <button
+            class="outline-button"
+            [disabled]="busy() || loading()"
+            (click)="ask({ session })"
+            [attr.aria-label]="
+              'Cerrar sesión: ' +
+              browser(session.userAgent) +
+              (session.current ? ', esta sesión' : '')
+            "
+          >
+            {{ session.current ? 'Salir aquí' : 'Cerrar sesión' }}
+          </button>
+        </li>
+      }
+    </ul>
+    @if (loaded() && !sessions().length && !loading()) {
+      <p>No hay sesiones abiertas en esta consulta.</p>
+    }
+    @if (hasMore()) {
+      <button class="outline-button" [disabled]="loading() || busy()" (click)="load(true)">
+        Ver más sesiones
+      </button>
+    }
+    <footer>
+      <p class="muted">
+        Cerrar sesiones no borra tu biblioteca, playlists, cola ni historial. El audio online de la sesión
+        cerrada se detendrá cuando reciba la revocación.
+      </p>
+      <div class="session-actions">
+        <button
+          class="outline-button"
+          [disabled]="!loaded() || loading() || busy()"
+          (click)="ask({ scope: 'others' })"
+        >
+          Cerrar las demás
+        </button>
+        <button
+          class="outline-button danger"
+          [disabled]="!loaded() || loading() || busy()"
+          (click)="ask({ scope: 'all' })"
+        >
+          Cerrar todas, incluida esta
+        </button>
+      </div>
+    </footer>
+  </section>
+  <app-password-settings (changed)="load()" />
+</section>
+<dialog
+  #confirmation
+  class="account-dialog"
+  aria-labelledby="session-confirm-title"
+  aria-describedby="session-confirm-description"
+  [attr.aria-busy]="busy()"
+  (cancel)="cancel($event)"
+>
+  <h2 id="session-confirm-title" tabindex="-1">{{ confirmationLabel() }}</h2>
+  <p class="dialog-description" id="session-confirm-description">{{ description() }}</p>
+  <div class="dialog-actions">
+    <button type="button" autofocus class="outline-button" [disabled]="busy()" (click)="cancel()">
+      Cancelar
+    </button>
+    <button
+      type="button"
+      class="primary-button primary-button--compact dialog-danger"
+      [disabled]="busy()"
+      (click)="confirm()"
+    >
+      {{ busy() ? 'Cerrando…' : confirmationLabel() }}
+    </button>
+  </div>
+</dialog>

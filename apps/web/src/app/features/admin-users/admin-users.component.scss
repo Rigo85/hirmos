@@ -1,0 +1,142 @@
+:host {
+  display: block;
+}
+.admin-content {
+  max-width: 1000px;
+}
+.admin-content h1 {
+  font-family: inherit;
+  font-weight: 700;
+}
+.source-card__status small { font-size: 14px; line-height: 1.5; }
+.invite-form__field label { font-size: 14px; }
+.account-tabs,
+.row-actions,
+.pagination,
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.account-tabs {
+  margin: 1.5rem 0;
+}
+.active {
+  color: var(--accent, #f1b85c);
+  border-color: currentColor;
+}
+.accounts-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+.accounts-toolbar form {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 34rem;
+  flex: 1;
+}
+.search-row {
+  flex-wrap: nowrap;
+}
+.search-row input {
+  min-width: 0;
+  flex: 1;
+}
+.account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 0;
+  border-bottom: 1px solid var(--border, #293039);
+}
+.account-row > div:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.account-row h2 {
+  font-size: 1rem;
+  margin: 0 0 0.45rem;
+}
+.account-row p {
+  margin: 0.25rem 0;
+}
+.account-row small,
+.account-row time {
+  color: var(--muted, #a5afbd);
+}
+.pagination {
+  margin-top: 1.5rem;
+  justify-content: flex-end;
+}
+dialog input,
+dialog select {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.checkbox-label input {
+  width: auto;
+}
+@media (max-width: 600px) {
+  .account-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .accounts-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .pagination {
+    justify-content: space-between;
+  }
+  .account-tabs button {
+    flex: 1;
+  }
+  .admin-header {
+    height: auto;
+    min-height: 72px;
+    gap: 16px;
+    padding: 16px 20px;
+    flex-wrap: wrap;
+  }
+  .admin-content {
+    margin-block: 32px;
+  }
+  .account-row .row-actions {
+    width: 100%;
+  }
+}
+.invite-form__row {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.checkbox-label {
+  cursor: pointer;
+}
+:host input:not([type='checkbox']),
+:host select {
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--surface);
+  box-sizing: border-box;
+}
+:host input:focus-visible,
+:host select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

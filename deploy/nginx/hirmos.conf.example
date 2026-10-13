@@ -17,7 +17,8 @@ server {
         proxy_buffering off;
     }
 
-    location ~ ^/api/music/tracks/.*/stream$ {
+    # Originals downloads need the same unbuffered transport as playback streams.
+    location ~ ^/api/music/tracks/[^/]+/(stream|download)$ {
         proxy_pass http://127.0.0.1:3013;
         proxy_http_version 1.1;
         proxy_set_header Host $host;

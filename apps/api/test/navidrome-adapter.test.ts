@@ -2,6 +2,63 @@ import { describe, expect, it, vi } from 'vitest';
 import { NavidromeAdapter } from '../src/music-source/navidrome-adapter.js';
 
 describe('NavidromeAdapter', () => {
+  it('downloads the untranscoded original using the public operation and retries transient failure', async () => {
+    const fetchImplementation = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status:503 }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([1,2,3]), { headers:{ 'content-type':'audio/flac', 'content-length':'3' } }));
+    const adapter = new NavidromeAdapter({ baseUrl:new URL('https://music.example'),username:'service',password:'secret', fetchImplementation });
+    const result = await adapter.getDownload('track-original');
+    expect(new Uint8Array(await new Response(result.body).arrayBuffer())).toEqual(new Uint8Array([1,2,3]));
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+    for (const [input, init] of fetchImplementation.mock.calls) {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe('/rest/download.view');
+      expect(url.searchParams.get('id')).toBe('track-original');
+      expect(url.searchParams.has('format')).toBe(false);
+      expect(url.searchParams.has('maxBitRate')).toBe(false);
+      expect(url.href).not.toContain('secret');
+      expect(new Headers(init.headers).get('accept-encoding')).toBe('identity');
+    }
+  });
+  it.each(['text/xml','application/json','text/html'])('rejects a successful HTTP response containing %s instead of audio', async type => {
+    const cancelled = vi.fn();
+    const fetchImplementation = vi.fn(async () => new Response(new ReadableStream({ cancel:cancelled }), { headers:{ 'content-type':type } }));
+    const adapter = new NavidromeAdapter({ baseUrl:new URL('https://music.example'),username:'service',password:'secret', fetchImplementation });
+    await expect(adapter.getDownload('track')).rejects.toThrow('Music source rejected');
+    expect(cancelled).toHaveBeenCalledOnce(); expect(fetchImplementation).toHaveBeenCalledOnce();
+  });
+  it('does not retry missing original or a cancellation', async () => {
+    const fetchImplementation = vi.fn(async () => new Response(null, {status:404}));
+    const adapter = new NavidromeAdapter({baseUrl:new URL('https://music.example'),username:'service',password:'secret',fetchImplementation});
+    await expect(adapter.getDownload('missing')).rejects.toMatchObject({status:404});
+    const controller = new AbortController(); controller.abort();
+    await expect(adapter.getDownload('track',controller.signal)).rejects.toThrow();
+    expect(fetchImplementation).toHaveBeenCalledOnce();
+  });
+  it.each([
+    { status:206, headers:{ 'content-type':'audio/flac', 'content-range':'bytes 0-2/99' } },
+    { status:200, headers:{ 'content-type':'audio/flac', 'content-encoding':'gzip' } },
+  ])('refuses unexpected partial or encoded download $status $headers', async init => {
+    const adapter = new NavidromeAdapter({baseUrl:new URL('https://music.example'),username:'service',password:'secret',
+      fetchImplementation:vi.fn(async () => new Response(new Uint8Array([1,2,3]), init)) });
+    await expect(adapter.getDownload('track')).rejects.toThrow('Music source rejected');
+  });
+  it('does not apply the short header timeout to a progressing original body', async () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = new NavidromeAdapter({baseUrl:new URL('https://music.example'),username:'service',password:'secret',
+        fetchImplementation:vi.fn(async (_input, init) => new Response(new ReadableStream({
+          start(controller) {
+            setTimeout(() => { controller.enqueue(new Uint8Array([7])); controller.close(); }, 6000);
+            init?.signal?.addEventListener('abort', () => controller.error(init.signal!.reason), {once:true});
+          },
+        }), {headers:{'content-type':'audio/flac'}})) });
+      const media = await adapter.getDownload('long-track');
+      const body = new Response(media.body).arrayBuffer();
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(new Uint8Array(await body)).toEqual(new Uint8Array([7]));
+    } finally { vi.useRealTimers(); }
+  });
   it('loads popular songs through the dedicated OpenSubsonic operation', async () => {
     let request: URL | null = null;
     const adapter = new NavidromeAdapter({
