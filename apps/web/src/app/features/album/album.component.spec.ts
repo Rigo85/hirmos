@@ -33,8 +33,9 @@ describe('AlbumComponent', () => {
     await fixture.whenStable(); fixture.detectChanges();
 
     const buttons = fixture.nativeElement.querySelectorAll('.genre-actions button') as NodeListOf<HTMLButtonElement>;
-    expect([...buttons].map((button) => button.textContent?.trim()))
-      .toEqual(['Reproducir álbum', 'Aleatorio']);
+    expect(buttons[0]!.querySelector('.desktop-label')?.textContent).toBe('Reproducir álbum');
+    expect(buttons[0]!.querySelector('.mobile-label')?.textContent).toBe('Reproducir');
+    expect(buttons[1]!.textContent?.trim()).toBe('Aleatorio');
 
     buttons[0]!.click();
     expect(selectContext).toHaveBeenLastCalledWith(
@@ -46,6 +47,25 @@ describe('AlbumComponent', () => {
       0, 'album', 'album-id',
     );
     expect(album().tracks.map((track) => track.id)).toEqual(['one', 'two', 'three']);
+    vi.restoreAllMocks();
+  });
+
+  it('groups secondary actions separately without changing their album targets', async () => {
+    const fixture = TestBed.createComponent(AlbumComponent);
+    fixture.detectChanges();
+    TestBed.inject(HttpTestingController).expectOne('/api/library/albums/album-id').flush(album());
+    await fixture.whenStable(); fixture.detectChanges();
+    const {PlaylistsService} = await import('../../core/playlists.service');
+    const {QueueMenuService} = await import('../../core/queue-menu.service');
+    const playlist = vi.spyOn(TestBed.inject(PlaylistsService), 'open').mockImplementation(() => undefined);
+    const queue = vi.spyOn(TestBed.inject(QueueMenuService), 'open').mockImplementation(() => undefined);
+    const actions = fixture.nativeElement.querySelectorAll('.album-actions > button') as NodeListOf<HTMLButtonElement>;
+    expect(actions).toHaveLength(2);
+    actions[0]!.click(); expect(playlist).toHaveBeenCalledWith(album().tracks);
+    actions[1]!.click(); expect(queue).toHaveBeenCalledWith(album().tracks);
+    expect(fixture.nativeElement.querySelector('.album-actions app-download-button').classList.contains('mobile-tile')).toBe(true);
+    expect(fixture.nativeElement.querySelectorAll('.detail-tracks .track-row')).toHaveLength(3);
+    expect(selectContext).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
 });
