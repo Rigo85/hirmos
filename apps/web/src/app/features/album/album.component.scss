@@ -1,6 +1,17 @@
-// No desktop layout changes: wrappers have no box outside the mobile breakpoint.
+// Keep header layout independent from the secondary action group.
 .album-info, .album-actions-zone, .album-actions { display: contents; }
 .mobile-label { display: none; }
+
+@media (min-width: 761px) {
+  .album-actions-zone { display: block; margin-top: 16px; }
+  .album-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; }
+  .album-actions > button {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 44px; margin: 0;
+  }
+  .album-actions > button app-icon { flex-shrink: 0; }
+  .album-actions > app-download-button { max-width: 100%; }
+}
 
 @media (max-width: 760px) {
   .desktop-label { display: none; }

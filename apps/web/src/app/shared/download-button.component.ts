@@ -16,6 +16,10 @@ import { AppIconComponent } from './app-icon.component';
   }
   @if(error()){<p class="form-error" role="alert">{{error()}}</p>}
 `,styles:`:host{display:inline-flex;align-items:center;gap:12px;flex-wrap:wrap}button,a.outline-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;white-space:nowrap;text-decoration:none;margin:0}app-icon{font-size:18px}a{color:var(--accent)}p{flex-basis:100%;margin:8px 0}
+@media(min-width:761px){
+  :host(.mobile-tile){display:contents}
+  :host(.mobile-tile)>span[role=status],:host(.mobile-tile)>p{flex-basis:100%;min-width:0;margin:0;overflow-wrap:anywhere}
+}
 @media(max-width:760px){
   :host(.mobile-tile){display:contents}
   :host(.mobile-tile) :is(button,a.outline-button){display:grid;grid-template-rows:20px auto;align-content:center;justify-items:center;gap:6px;min-width:0;min-height:76px;padding:10px 6px;font-size:.875rem;line-height:1.3;white-space:normal;text-align:center}

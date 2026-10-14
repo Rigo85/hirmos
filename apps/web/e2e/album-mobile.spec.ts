@@ -83,14 +83,45 @@ test('enlarged text stacks management actions without truncation',async({page})=
   await page.screenshot({path:'/tmp/hirmos-album-mobile-enlarged.png',fullPage:true});
 });
 
-test('desktop keeps its header structure and player geometry',async({page})=>{
-  await page.setViewportSize({width:1280,height:900});await albumPage(page);
+for(const width of [1077,1280])for(const collapsed of [false,true])test(`desktop actions align at ${width}px with sidebar ${collapsed?'collapsed':'expanded'}`,async({page})=>{
+  await page.setViewportSize({width,height:900});await albumPage(page);
+  if(collapsed)await page.getByRole('button',{name:'Contraer menú lateral'}).click();
   await expect(page.locator('.album-info')).toHaveCSS('display','contents');
-  await expect(page.locator('.album-actions')).toHaveCSS('display','contents');
   await expect(page.locator('.album-copy')).toHaveCSS('display','block');
   await expect(page.locator('.album-playback-actions')).toHaveCSS('display','flex');
   await expect(page.getByRole('button',{name:'Reproducir álbum',exact:true})).toBeVisible();
   await expect(page.getByRole('button',{name:'Añadir álbum a playlist',exact:true})).toBeVisible();
   await expect(page.locator('.player-bar')).toHaveCSS('height','76px');
-  await page.screenshot({path:'/tmp/hirmos-album-desktop.png',fullPage:true});
+  async function assertAlignment(){
+    const controls=await boxes(page);expect(controls).toHaveLength(3);
+    for(const [i,box] of controls.entries()){
+      expect(box.y).toBeCloseTo(controls[0]!.y,0);
+      expect(box.height).toBe(44);
+      if(i)expect(box.x-controls[i-1]!.x-controls[i-1]!.width).toBeCloseTo(12,0);
+    }
+    const contents=await page.locator('.album-actions').evaluate(root=>
+      [...root.querySelectorAll(':scope > button, app-download-button > button, app-download-button > a.outline-button')].map(button=>{
+        const icon=button.querySelector('app-icon')!.getBoundingClientRect();
+        const label=[...button.querySelectorAll('span')].find(span=>getComputedStyle(span).display!=='none')!.getBoundingClientRect();
+        return{gap:label.x-icon.right,center:Math.abs(icon.y+icon.height/2-label.y-label.height/2)};
+      }));
+    for(const item of contents){expect(item.gap).toBeCloseTo(8,0);expect(item.center).toBeLessThanOrEqual(1);}
+  }
+  await assertAlignment();
+  await page.screenshot({path:`/tmp/hirmos-album-desktop-${width}-${collapsed?'collapsed':'expanded'}.png`,fullPage:true});
+  await page.locator('app-download-button button').click();
+  await expect(page.locator('app-download-button a.outline-button')).toHaveText('Descargado',{timeout:30000});
+  await assertAlignment();
+  // Layout-only simulation of a longer state and feedback, not a failed transfer.
+  await page.locator('app-download-button').evaluate(host=>{
+    const button=host.querySelector('a.outline-button')!;
+    button.querySelector('span')!.textContent='Completar descarga';
+    const error=document.createElement('p');error.role='alert';error.className='form-error';
+    error.textContent='No pudimos preparar la descarga. Inténtalo de nuevo.';
+    error.setAttribute(button.getAttributeNames().find(name=>name.startsWith('_ngcontent-'))!,'');host.append(error);
+  });
+  await assertAlignment();
+  const feedback=await page.locator('app-download-button > [role=alert]').boundingBox();
+  const controls=await boxes(page);
+  expect(feedback!.y).toBeGreaterThanOrEqual(controls[0]!.y+controls[0]!.height+12);
 });
