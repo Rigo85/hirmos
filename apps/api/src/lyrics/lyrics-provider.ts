@@ -11,5 +11,7 @@ export interface PublicLyricsResult {
 export interface LyricsProvider {
   readonly name: string;
   readonly timeoutMs?: number;
+  /** Only invalidates negative results from an older lookup strategy. */
+  readonly negativeCacheVersion?: string;
   find(track: SourceTrack, signal?: AbortSignal): Promise<PublicLyricsResult | null>;
 }

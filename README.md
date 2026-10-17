@@ -42,6 +42,15 @@ puede usar una versión anterior; un push no implica despliegue automático.
   durable, vacíos no destructivos y revalidación administrativa en segundo
   plano.
 
+La búsqueda de letras mantiene el orden AMLL → LRCLIB → OpenSubsonic.
+LRCLIB intenta los metadatos originales, una limpieza conservadora de etiquetas
+editoriales del álbum y finalmente búsqueda por artista/título. Valida identidad,
+versión y duración; no elige a ciegas entre letras contradictorias. Las consultas
+comparten un presupuesto de 6,5 segundos y un solo reintento adicional. Una caída
+no se guarda como ausencia ni elimina letras válidas. Cambiar la estrategia de
+búsqueda invalida únicamente los resultados negativos antiguos, no las letras
+descargadas ni sus ajustes personales.
+
 ## Estructura
 
 ```text

@@ -529,6 +529,7 @@ export class MusicSourceService {
         const cached = await this.lyricsRepository.get({
           sourceId: source.id, remoteTrackId: remoteId,
           provider: provider.name, fingerprint,
+          negativeCacheVersion: provider.negativeCacheVersion,
         });
         if (cached?.length) return { lyrics: cached, adjustmentMs, availability: 'available' as const };
         if (cached !== undefined) continue;
@@ -551,13 +552,16 @@ export class MusicSourceService {
             providerItemId: found?.providerItemId,
             instrumental: found?.instrumental,
             rawObjectKey: rawCache?.key,
-            parserVersion: rawCache?.parserVersion,
+            // Negative rows have no document/parser: use the existing version
+            // field to identify the lookup strategy, preserving all positives.
+            parserVersion: found ? rawCache?.parserVersion : provider.negativeCacheVersion,
             document: found?.document ?? null,
           });
           if (found) {
             return { lyrics: [found.document], adjustmentMs, availability: 'available' as const };
           }
         } catch {
+          signal?.throwIfAborted();
           providerUnavailable = true;
           staleLyrics ??= await this.lyricsRepository.getStaleFound({
             sourceId: source.id, remoteTrackId: remoteId,

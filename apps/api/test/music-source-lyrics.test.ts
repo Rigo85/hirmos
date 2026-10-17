@@ -155,7 +155,63 @@ describe('MusicSourceService lyrics', () => {
     )).resolves.toMatchObject({ lyrics: [], availability: 'temporarily_unavailable' });
     expect(put).not.toHaveBeenCalled();
   });
+
+  it('passes the lookup version only to negative-cache checks and writes', async () => {
+    const { service, repository } = lookupFixture({ name: 'lrclib', negativeCacheVersion: 'lrclib-lookup-v2',
+      find: vi.fn(async () => null) });
+    await service.lyrics(encodeTrackReference('source-a', 'track-a'), 'user-a');
+    expect(repository.get).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'lrclib', negativeCacheVersion: 'lrclib-lookup-v2',
+    }));
+    expect(repository.put).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'lrclib', parserVersion: 'lrclib-lookup-v2', document: null,
+    }));
+  });
+
+  it('keeps a positive cache without fetching even after lookup strategy changes', async () => {
+    const provider = { name: 'lrclib', negativeCacheVersion: 'v2', find: vi.fn() };
+    const { service, repository } = lookupFixture(provider);
+    vi.mocked(repository.get).mockResolvedValue([fallbackDocument]);
+    await service.lyrics(encodeTrackReference('source-a', 'track-a'), 'user-a');
+    expect(provider.find).not.toHaveBeenCalled();
+    expect(repository.put).not.toHaveBeenCalled();
+  });
+
+  it('falls back on ambiguous lyrics without persisting a public-provider miss', async () => {
+    const { service, repository, adapter } = lookupFixture({ name: 'lrclib',
+      find: vi.fn(async () => { throw new Error('LRCLIB could not establish a reliable match'); }) });
+    vi.mocked(adapter.getLyrics).mockResolvedValue([fallbackDocument]);
+    await expect(service.lyrics(encodeTrackReference('source-a', 'track-a'), 'user-a'))
+      .resolves.toMatchObject({ availability: 'available', lyrics: [fallbackDocument] });
+    expect(repository.put).toHaveBeenCalledTimes(1);
+    expect(repository.put).toHaveBeenCalledWith(expect.objectContaining({ provider: 'opensubsonic' }));
+  });
+
+  it('does not launch another provider or write negative cache on caller cancellation', async () => {
+    const controller = new AbortController();
+    const { service, repository, adapter } = lookupFixture({ name: 'lrclib',
+      find: vi.fn(async () => { controller.abort(); controller.signal.throwIfAborted(); return null; }) });
+    await expect(service.lyrics(encodeTrackReference('source-a', 'track-a'), 'user-a', controller.signal))
+      .rejects.toMatchObject({ name: 'AbortError' });
+    expect(adapter.getLyrics).not.toHaveBeenCalled();
+    expect(repository.put).not.toHaveBeenCalled();
+  });
 });
+
+const fallbackDocument = { displayArtist: 'Artist', displayTitle: 'Song', language: null, synced: false,
+  lines: [{ startMs: null, text: 'Synthetic fallback' }] };
+
+function lookupFixture(provider: LyricsProvider) {
+  const adapter = { getTrack: vi.fn(async () => ({ id: 'track-a', title: 'Song', artist: 'Artist',
+    album: 'Album', durationMs: 180_000 })), getLyrics: vi.fn(async () => []) } as unknown as MusicSourceAdapter;
+  const repository = { getAdjustment: vi.fn(async () => 0), get: vi.fn(async () => undefined),
+    getStaleFound: vi.fn(async () => undefined), put: vi.fn(async () => undefined) } as unknown as LyricsRepository;
+  const service = new MusicSourceService(
+    { current: vi.fn(async () => source()) } as unknown as MusicSourceRepository,
+    { decrypt: vi.fn(() => ({ username: 'service', password: 'secret' })) } as unknown as SourceCredentialCipher,
+    { create: vi.fn(() => adapter) } as unknown as MusicSourceAdapterFactory, undefined, repository, [provider]);
+  return { service, repository, adapter };
+}
 
 function source(): StoredMusicSource {
   return {

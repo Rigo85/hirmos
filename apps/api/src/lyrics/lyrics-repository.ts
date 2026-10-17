@@ -55,6 +55,7 @@ export class LyricsRepository {
 
   public async get(input: {
     sourceId: string; remoteTrackId: string; provider: string; fingerprint: string;
+    negativeCacheVersion?: string;
   }): Promise<SourceLyrics[] | null | undefined> {
     const result = await this.db.query<CacheRow>(
       `SELECT status, display_artist, display_title, language, synced, lines
@@ -62,8 +63,10 @@ export class LyricsRepository {
         WHERE source_id = $1 AND remote_track_id = $2 AND provider = $3
           AND lookup_fingerprint = $4
           AND (status = 'found' OR expires_at > now())
+          AND (status = 'found' OR $5::text IS NULL OR parser_version = $5)
         ORDER BY fetched_at DESC LIMIT 1`,
-      [input.sourceId, input.remoteTrackId, input.provider, input.fingerprint],
+      [input.sourceId, input.remoteTrackId, input.provider, input.fingerprint,
+       input.negativeCacheVersion ?? null],
     );
     const row = result.rows[0];
     if (!row) return undefined;
@@ -136,7 +139,11 @@ export class LyricsRepository {
          parser_version = EXCLUDED.parser_version,
          content_hash = EXCLUDED.content_hash,
          fetched_at = now(),
-         expires_at = EXCLUDED.expires_at`,
+         expires_at = EXCLUDED.expires_at
+       WHERE lyrics_cache.status <> 'found'
+          OR (EXCLUDED.status = 'found' AND
+            CASE EXCLUDED.quality WHEN 'word' THEN 2 WHEN 'line' THEN 1 ELSE 0 END >=
+            CASE lyrics_cache.quality WHEN 'word' THEN 2 WHEN 'line' THEN 1 ELSE 0 END)`,
       [input.sourceId, input.remoteTrackId, input.provider, input.providerItemId ?? null,
        input.fingerprint, document?.displayArtist ?? null, document?.displayTitle ?? null,
        document?.language ?? null, document?.synced ?? false, input.instrumental ?? false,

@@ -24,6 +24,9 @@ import { PlaybackRepository } from '../apps/api/dist/playback/playback-repositor
 import { PlaybackService } from '../apps/api/dist/playback/playback-service.js';
 import { PlaybackActivityProjector } from '../apps/api/dist/playback/playback-activity-projector.js';
 import { createSocketServer } from '../apps/api/dist/socket/socket-server.js';
+import { LyricsRepository } from '../apps/api/dist/lyrics/lyrics-repository.js';
+import { LrclibLyricsProvider } from '../apps/api/dist/lyrics/lrclib-lyrics-provider.js';
+import { ThirdPartyTelemetry } from '../apps/api/dist/integrations/third-party-request.js';
 
 const url = new URL(process.env.HIRMOS_TEST_DATABASE_URL ?? '');
 if (!['127.0.0.1', 'localhost'].includes(url.hostname) || url.pathname !== '/hirmos_core_test') {
@@ -47,6 +50,33 @@ const songs = ['Primera señal', 'Segunda señal', 'Tercera señal', 'Cuarta se�
   id: String(i + 1), title, artist: 'Artista de prueba', artistId: 'artist', album: 'Prueba de continuidad',
   albumId: 'album', coverArt:'fixture-cover', duration: 180, track: i + 1, isDir: false, contentType: 'audio/wav', suffix: 'wav',
 }));
+// Opt-in lyrics lab: real resolver + synthetic responses, no external traffic.
+const lyricsLab = process.env.HIRMOS_FIXTURE_LYRICS_LOOKUP === '1';
+if (lyricsLab) for (const song of songs) song.album += ' (Example Records - ABC 1234, EU, 2026)';
+const lyricsTelemetry = new ThirdPartyTelemetry();
+const lyricsRequests = [];
+const lyricsProvider = new LrclibLyricsProvider(async input => {
+  const target = new URL(String(input));
+  const title = target.searchParams.get('track_name');
+  const search = target.pathname === '/api/search';
+  lyricsRequests.push({ operation: search ? 'search' : 'get', title,
+    album: target.searchParams.get('album_name') });
+  if (lyricsRequests.length > 100) lyricsRequests.shift();
+  const song = songs.find(song => song.title === title);
+  if (!song) throw new Error('Only synthetic fixture tracks are allowed');
+  if (song.id === '4') return new Response(null, { status: 503, headers: { 'Retry-After': '0' } });
+  const row = { id: Number(song.id), trackName: title, artistName: song.artist,
+    albumName: 'Prueba de continuidad', duration: 180,
+    syncedLyrics: '[00:00]Letra sintética LRCLIB: búsqueda validada.\n[00:10]Segunda línea de prueba.' };
+  if (!search) {
+    if (song.id !== '1' || target.searchParams.get('album_name') !== row.albumName) {
+      return new Response(null, { status: 404 });
+    }
+    return Response.json(row);
+  }
+  return Response.json(song.id === '3'
+    ? [row, { ...row, id: 33, syncedLyrics: '[00:00]Documento contradictorio: no elegir.' }] : [row]);
+}, lyricsTelemetry);
 const album = { id: 'album', name: 'Prueba de continuidad', artist: 'Artista de prueba',
   artistId: 'artist', coverArt:'fixture-cover', songCount: songs.length, duration: 720, year: 2026 };
 const artist = { id: 'artist', name: 'Artista de prueba', albumCount: 1 };
@@ -120,7 +150,8 @@ const config = loadConfig({ NODE_ENV: 'development', HOST: '127.0.0.1', PORT: '3
   PUBLIC_ORIGIN: 'http://127.0.0.1:3313', LOG_LEVEL: 'warn' });
 const music = new MusicSourceService(new MusicSourceRepository(database),
   new SourceCredentialCipher(randomBytes(32).toString('base64url')), undefined,
-  new ActivityRepository(database), undefined, [], new CatalogRepository(database), undefined,
+  new ActivityRepository(database), lyricsLab ? new LyricsRepository(database) : undefined,
+  lyricsLab ? [lyricsProvider] : [], new CatalogRepository(database), undefined,
   new FavoriteRepository(database));
 await music.configure({ name: 'Fuente sintética', baseUrl: 'http://127.0.0.1:3314', username: 'fixture', password: 'fixture' });
 await music.syncCatalog();
@@ -130,6 +161,10 @@ const auth = new AuthService(new PostgresAuthRepository(database), undefined, re
 const accounts = new AccountService(new PostgresAccountRepository(database),
   new AesGcmOutboxCipher(randomBytes(32).toString('base64url')), config.PUBLIC_ORIGIN, undefined, revocations);
 const app = await buildApp({ config, authService: auth, accountService: accounts, musicSourceService: music, database, revocations });
+if (lyricsLab) {
+  lyricsTelemetry.attachLogger(app.log);
+  app.get('/__fixture/lyrics-requests', async () => ({ requests: lyricsRequests }));
+}
 // Opt-in, local-only instrumentation. No production bundle or audio behavior changes.
 if (process.env.HIRMOS_FIXTURE_AUDIO_PROBE === '1') {
   app.get('/__fixture/audio-probe.js', async (_request, reply) => reply.type('application/javascript')
