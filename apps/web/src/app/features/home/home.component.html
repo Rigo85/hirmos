@@ -25,7 +25,7 @@
             <a routerLink="/activity/recent">Ver todos</a>
           </div>
         </div>
-        <ol #recentCarousel class="track-carousel" aria-label="Escuchado recientemente">@for (track of home.recentlyPlayed; track track.id) { <li appTrackRow [track]="track" [showCover]="true" (playTrack)="play(track)"></li> }</ol>
+        <ol #recentCarousel class="track-carousel" aria-label="Escuchado recientemente">@for (track of home.recentlyPlayed; track track.id) { <li appTrackRow presentation="recent" [track]="track" [showCover]="true" (playTrack)="play(track)"></li> }</ol>
       </section>
     }
     @if (home.topArtists.length) {

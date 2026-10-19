@@ -422,6 +422,33 @@ texto ampliado, botones de descarga y escritorio con menú expandido/contraído.
 Usa cuentas y descargas sintéticas en contextos aislados de Chrome; no sustituye
 la validación física en Android. Rechaza orígenes distintos del laboratorio.
 
+Para revisar la legibilidad móvil de recientes y pistas de álbum, iniciar el
+mismo fixture con `--track-layout`. Añade títulos largos y un artista distinto
+al conjunto sintético, y puebla recientes sin generar escuchas reales. No usar
+esta opción para validar estadísticas de historial.
+
+```bash
+HIRMOS_TRACK_LAYOUT_LAB=1 HIRMOS_E2E_ORIGIN=http://127.0.0.1:3313 npm run e2e -w @hirmos/web -- track-layout.spec.ts
+```
+
+Comprueba títulos y controles a 320/360/390/412 px, texto ampliado, indicadores
+de descarga, Play/Pausa, favoritos y conservación del diseño de álbum en escritorio.
+
+El fixture admite además `HIRMOS_FIXTURE_CATALOG_FILE` con una muestra JSON
+privada fuera de este repositorio (versión1, `albums`, `songs` y `covers` con
+raster base64). Importa solo campos permitidos de metadatos y portadas, con
+límites de tamaño; no importa URLs, credenciales, cuentas ni audio. Mantener
+las muestras reales fuera de Git público. El audio sigue siendo un tono
+sintético de180segundos, no la grabación ni su duración real. La cola, favoritos
+y escuchas de prueba permanecen en la base desechable. Los recientes se pueblan
+artificialmente: este modo no valida estadísticas reales.
+`catalog-layout.spec.ts` usa esa misma variable y origen loopback para comprobar
+la presentación con la muestra, incluidas portadas y ausencia de requests externos.
+También verifica escritorio a 1077/1280/1920 px con menú lateral expandido y
+contraído: metadatos, favorito directo, controles alineados y barra de 76 px.
+El diseño compacto y las tarjetas de recientes se aplican solo en móvil;
+en álbum móvil, el favorito se gestiona desde las opciones de cada canción.
+
 El protocolo de reproducción v5 y las playlists requieren las migraciones `0013` a `0019`, API y web de la
 misma versión. Las pestañas anteriores deben recargarse; no se admiten comandos
 antiguos sin identidad de ejecución. El registro de actividad se confirma junto

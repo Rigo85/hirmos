@@ -1,7 +1,7 @@
 import { DecimalPipe } from '@angular/common';
 import { Component, computed, inject, input, output } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import type { Track } from '@hirmos/contracts';
+import type { Album, Track } from '@hirmos/contracts';
 import { PlaybackSyncService } from '../core/playback-sync.service';
 import { FavoritesService } from '../core/favorites.service';
 import { AppIconComponent } from './app-icon.component';
@@ -16,6 +16,8 @@ import { DownloadBadgeComponent } from './download-badge.component';
     class: 'track-row',
     '[class.track-row--current]': 'isCurrent()',
     '[class.track-row--playing]': 'isPlaying()',
+    '[class.track-row--recent]': "presentation() === 'recent'",
+    '[class.track-row--album]': "presentation() === 'album'",
     '[attr.aria-current]': "isCurrent() ? 'true' : null",
   },
   template: `
@@ -32,18 +34,25 @@ import { DownloadBadgeComponent } from './download-badge.component';
     </button>
     <div class="track-row__copy">
       <button class="track-row__title" type="button" (click)="activate()" [attr.aria-label]="actionLabel()">{{ track().title }}</button>
-      <div class="track-row__meta">
-        @if (track().artistId) { <a [routerLink]="['/artists', track().artistId]">{{ track().artist }}</a> }
-        @else { <span>{{ track().artist }}</span> }
+      <div class="track-row__meta" [class.track-row__meta--same-artist]="sameArtist()" [class.track-row__meta--same-album]="sameAlbum()">
+        @if (track().artistId) { <a class="track-row__artist" [routerLink]="['/artists', track().artistId]">{{ track().artist }}</a> }
+        @else { <span class="track-row__artist">{{ track().artist }}</span> }
         @if (track().album) {
-          <span aria-hidden="true">·</span>
-          @if (track().albumId) { <a [routerLink]="['/albums', track().albumId]">{{ track().album }}</a> }
-          @else { <span>{{ track().album }}</span> }
+          <span class="track-row__separator" aria-hidden="true">·</span>
+          @if (track().albumId) { <a class="track-row__album-name" [routerLink]="['/albums', track().albumId]">{{ track().album }}</a> }
+          @else { <span class="track-row__album-name">{{ track().album }}</span> }
         }
       </div>
+      @if(presentation() === 'album') {
+        <div class="track-row__compact-status">
+          @if(showDuration()){<time>{{ durationLabel() }}</time>}
+          <app-download-badge [reference]="track().id" />
+          @if(isFavorite()){<span class="track-row__favorite-indicator" aria-label="En favoritos"><app-icon name="heart-filled" /></span>}
+        </div>
+      }
     </div>
     <div class="track-row__trailing">
-      <button class="icon-button track-row__playlist" type="button" (click)="queueMenu.open([track()])" [attr.aria-label]="'Opciones para ' + track().title" title="Cola y playlists"><app-icon name="more" /></button>
+      <button class="icon-button track-row__playlist" type="button" (click)="queueMenu.open([track()], presentation() === 'album')" [attr.aria-label]="'Opciones para ' + track().title" title="Opciones de la canción"><app-icon name="more" /></button>
       <app-download-badge [reference]="track().id" />
       @if (trailingText()) { <time>{{ trailingText() }}</time> }
       @else if (showDuration()) { <time>{{ track().durationMs / 60000 | number:'1.0-0' }} min</time> }
@@ -59,9 +68,21 @@ export class TrackRowComponent {
   public readonly position = input<number | null>(null);
   public readonly showCover = input(false);
   public readonly showDuration = input(true);
+  public readonly presentation = input<'standard' | 'recent' | 'album'>('standard');
+  public readonly albumContext = input<Pick<Album,'id'|'name'|'artist'|'artistId'> | null>(null);
+  protected readonly sameAlbum = computed(() => this.presentation() === 'album' &&
+    !!this.albumContext() && this.track().albumId === this.albumContext()!.id &&
+    this.track().album.trim() === this.albumContext()!.name.trim());
+  protected readonly sameArtist = computed(() => this.sameAlbum() &&
+    !!this.track().artistId && this.track().artistId === this.albumContext()!.artistId &&
+    this.track().artist.trim() === this.albumContext()!.artist.trim());
   public readonly trailingText = input<string | null>(null);
   public readonly playTrack = output<Track>();
   public readonly favoriteChange = output<boolean>();
+  protected readonly durationLabel = computed(() => {
+    const seconds = Math.max(0, Math.floor(this.track().durationMs / 1000));
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  });
 
   protected readonly isCurrent = computed(() =>
     this.playback.snapshot()?.currentTrackRef === this.track().id,

@@ -38,6 +38,6 @@
         <app-download-button [tracks]="item.tracks" [album]="item" [mobileTile]="true" />
       </div>
     </div>
-    <ol class="track-results detail-tracks">@for (track of item.tracks; track track.id; let index = $index) { <li appTrackRow [track]="track" [position]="index + 1" (playTrack)="play(track)"></li> }</ol>
+    <ol class="track-results detail-tracks">@for (track of item.tracks; track track.id; let index = $index) { <li appTrackRow presentation="album" [albumContext]="item" [track]="track" [position]="index + 1" (playTrack)="play(track)"></li> }</ol>
   }
 </div>

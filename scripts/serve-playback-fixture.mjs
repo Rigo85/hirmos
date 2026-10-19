@@ -3,7 +3,8 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import argon2 from 'argon2';
 import { createDatabase } from '../apps/api/dist/db/database.js';
 import { loadConfig } from '../apps/api/dist/config.js';
@@ -50,6 +51,18 @@ const songs = ['Primera señal', 'Segunda señal', 'Tercera señal', 'Cuarta se�
   id: String(i + 1), title, artist: 'Artista de prueba', artistId: 'artist', album: 'Prueba de continuidad',
   albumId: 'album', coverArt:'fixture-cover', duration: 180, track: i + 1, isDir: false, contentType: 'audio/wav', suffix: 'wav',
 }));
+// Opt-in layout review. Synthetic audio and ids; never real listening history.
+const trackLayoutLab = process.argv.includes('--track-layout');
+if (trackLayoutLab) {
+  const titles=['Walk In The Shadows (Remastered — prueba)',
+    'I Dream In Infrared (Live — prueba)',
+    'The Whisper — una edición de prueba con un nombre especialmente largo (Remastered)',
+    'Surgical Strike'];
+  songs.forEach((song,index)=>{song.title=titles[index];});
+  songs[2].artist='Artista de prueba con Colaborador invitado';
+  songs[2].artistId='guest';
+  delete songs[3].coverArt;
+}
 // Opt-in lyrics lab: real resolver + synthetic responses, no external traffic.
 const lyricsLab = process.env.HIRMOS_FIXTURE_LYRICS_LOOKUP === '1';
 if (lyricsLab) for (const song of songs) song.album += ' (Example Records - ABC 1234, EU, 2026)';
@@ -80,6 +93,43 @@ const lyricsProvider = new LrclibLyricsProvider(async input => {
 const album = { id: 'album', name: 'Prueba de continuidad', artist: 'Artista de prueba',
   artistId: 'artist', coverArt:'fixture-cover', songCount: songs.length, duration: 720, year: 2026 };
 const artist = { id: 'artist', name: 'Artista de prueba', albumCount: 1 };
+const albums=[album];
+const artists=[artist];
+const localCovers=new Map();
+// Optional private metadata/artwork snapshot. No URLs, credentials or audio are
+// imported; every provider request still goes to this loopback fixture.
+const catalogFile=process.env.HIRMOS_FIXTURE_CATALOG_FILE;
+if(catalogFile){
+  if(!trackLayoutLab || lyricsLab)throw Error('Catalog snapshot requires only --track-layout');
+  const path=resolve(catalogFile),publicRoot=fileURLToPath(new URL('../',import.meta.url));
+  if(path.startsWith(publicRoot)||(await stat(path)).size>12*1024*1024)throw Error('Keep the bounded snapshot outside the public repository');
+  const sample=JSON.parse(await readFile(path,'utf8'));
+  if(sample.version!==1||!Array.isArray(sample.albums)||sample.albums.length>10||!Array.isArray(sample.songs)||sample.songs.length>500)throw Error('Invalid sample');
+  const text=(value)=>{if(typeof value!=='string'||value.length>1000)throw Error('Invalid sample text');return value;};
+  const genres=(values)=>Array.isArray(values)?values.slice(0,20).map(text):[];
+  const id=(value)=>{if(!/^sample-[a-z]+-\d+(?:-guest)?$/.test(value))throw Error('Invalid local sample id');return value;};
+  for(const [key,cover] of Object.entries(sample.covers??{})){
+    id(key);if(!['image/png','image/jpeg','image/webp'].includes(cover.type))throw Error('Invalid raster');
+    const bytes=Buffer.from(cover.base64,'base64');if(bytes.length>2*1024*1024)throw Error('Large cover');
+    localCovers.set(key,{bytes,type:cover.type});
+  }
+  for(const a of sample.albums){
+    const existing=artists.find(value=>value.name===a.artist);
+    const artistId=existing?.id??id(a.artistId);
+    if(!existing)artists.push({id:artistId,name:text(a.artist),albumCount:0});
+    const tracks=sample.songs.filter(t=>t.albumId===a.id);
+    const coverArt=localCovers.has(a.coverArt)?a.coverArt:undefined;
+    albums.push({id:id(a.id),name:text(a.name),artist:text(a.artist),artistId,coverArt,
+      songCount:tracks.length,duration:Number(a.duration)||0,year:Number(a.year)||undefined,genres:genres(a.genres)});
+    for(const t of tracks){
+      if(!Number.isFinite(t.duration)||t.duration<0||t.duration>7200)throw Error('Invalid duration');
+      songs.push({id:id(t.id),title:text(t.title),artist:text(t.artist),artistId:t.artistId===a.artistId?artistId:id(t.artistId),
+        album:text(a.name),albumId:id(a.id),coverArt,duration:t.duration,track:Number(t.track)||0,discNumber:Number(t.discNumber)||1,
+        genres:genres(t.genres),isDir:false,contentType:'audio/wav',suffix:'wav'});
+    }
+  }
+  for(const a of artists)a.albumCount=albums.filter(item=>item.artistId===a.id).length;
+}
 const wav = Buffer.alloc(44 + 180 * 16000 * 2);
 wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
 wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
@@ -108,6 +158,8 @@ const provider = createServer(async (req, res) => {
   requests.push({ operation, id, at: Date.now(), mode: fault.mode });
   if (requests.length > 100) requests.shift();
   if(operation==='getCoverArt'){
+    const local=localCovers.get(id);
+    if(local){res.writeHead(200,{'content-type':local.type,'content-length':local.bytes.length});return res.end(local.bytes);}
     // One-pixel raster, entirely synthetic; no artwork or external provider.
     const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
     res.writeHead(200,{'content-type':'image/png','content-length':png.length});return res.end(png);
@@ -130,12 +182,13 @@ const provider = createServer(async (req, res) => {
   }
   const data = {
     ping: {}, getOpenSubsonicExtensions: { openSubsonicExtensions: [] },
-    getArtists: { artists: { index: [{ artist: [artist] }] } },
-    getAlbumList2: { albumList2: { album: Number(target.searchParams.get('offset')) ? [] : [album] } },
-    getAlbum: { album: { ...album, song: songs } }, getArtist: { artist: { ...artist, album: [album] } },
+    getArtists: { artists: { index: [{ artist: artists }] } },
+    getAlbumList2: { albumList2: { album: albums.slice(Number(target.searchParams.get('offset')||0),Number(target.searchParams.get('offset')||0)+Number(target.searchParams.get('size')||500)) } },
+    getAlbum: { album: { ...(albums.find(a=>a.id===id)??album), song: songs.filter(t=>t.albumId===(id??album.id)) } },
+    getArtist: { artist: { ...(artists.find(a=>a.id===id)??artist), album: albums.filter(a=>a.artistId===(id??artist.id)) } },
     getArtistInfo2: { artistInfo2: {} }, getTopSongs: { topSongs: { song: songs } },
     getGenres: { genres: { genre: [] } }, getRandomSongs: { randomSongs: { song: songs } },
-    search3: { searchResult3: { song: Number(target.searchParams.get('songOffset')) ? [] : songs, artist: [artist], album: [album] } },
+    search3: { searchResult3: { song: Number(target.searchParams.get('songOffset')) ? [] : songs, artist: artists, album: albums } },
     getSong: { song: songs.find(song => song.id === id) }, getLyrics: { lyrics: {} },
     getLyricsBySongId: { lyricsList: { structuredLyrics: [{displayArtist:artist.name,
       displayTitle:songs.find(song=>song.id===id)?.title,lang:'es',synced:true,
@@ -155,6 +208,15 @@ const music = new MusicSourceService(new MusicSourceRepository(database),
   new FavoriteRepository(database));
 await music.configure({ name: 'Fuente sintética', baseUrl: 'http://127.0.0.1:3314', username: 'fixture', password: 'fixture' });
 await music.syncCatalog();
+if (trackLayoutLab) {
+  const originalHome=music.home.bind(music);
+  music.home=async userId=>{
+    const home=await originalHome(userId);
+    const selected=catalogFile?home.recentlyAdded.filter(a=>a.name!=='Prueba de continuidad'):home.recentlyAdded.slice(0,1);
+    const details=await Promise.all(selected.map(a=>music.album(userId,a.id)));
+    return {...home,recentlyPlayed:details.flatMap(a=>catalogFile?a.tracks.slice(0,3):a.tracks).slice(0,12)};
+  };
+}
 const revocations = new SessionRevocationNotifier();
 const auth = new AuthService(new PostgresAuthRepository(database), undefined, revocations);
 // No SMTP worker: synthetic invitation messages stay in this disposable database.
@@ -195,3 +257,4 @@ async function close() {
 }
 process.once('SIGINT', () => void close()); process.once('SIGTERM', () => void close());
 console.log('Fixture ready: http://127.0.0.1:3313 — listener@example.test / Fixture-only-2026!');
+if(catalogFile)console.log('Private catalog snapshot loaded. Audio remains a synthetic 180-second tone; never the original music.');

@@ -8,6 +8,7 @@ import { AppIconComponent } from './app-icon.component';
 import { TrackRowComponent } from './track-row.component';
 import { FavoritesService } from '../core/favorites.service';
 import { DownloadsService } from '../offline/downloads.service';
+import { QueueMenuService } from '../core/queue-menu.service';
 
 describe('TrackRowComponent', () => {
   const snapshot = signal<{ currentTrackRef: string | null; status: 'playing' | 'paused' }>({
@@ -65,10 +66,45 @@ describe('TrackRowComponent', () => {
     expect(fixture.nativeElement.querySelector('.track-row__meta').textContent.replace(/\s/g, ''))
       .toBe('Artista·Álbum');
   });
+  it('only marks redundant mobile album metadata when context, ids and names agree',()=>{
+    const fixture=TestBed.createComponent(TrackRowComponent);
+    fixture.componentRef.setInput('track',track());
+    fixture.componentRef.setInput('presentation','album');
+    fixture.componentRef.setInput('albumContext',{id:'album-id',name:'Álbum',artist:'Artista',artistId:'artist-id'});
+    fixture.detectChanges();
+    const meta=()=>fixture.nativeElement.querySelector('.track-row__meta');
+    expect(meta().classList).toContain('track-row__meta--same-artist');
+    expect(meta().classList).toContain('track-row__meta--same-album');
+    // Preserve DOM metadata for desktop; CSS omission is mobile and context-specific.
+    expect(meta().textContent).toContain('Artista');
+    for(const value of [{...track(),artist:'Artista con invitado'}, {...track(),artistId:null}]){
+      fixture.componentRef.setInput('track',value);fixture.detectChanges();
+      expect(meta().classList).not.toContain('track-row__meta--same-artist');
+    }
+    fixture.componentRef.setInput('track',track());
+    fixture.componentRef.setInput('presentation','standard');fixture.detectChanges();
+    expect(meta().classList).not.toContain('track-row__meta--same-album');
+    expect(meta().classList).not.toContain('track-row__meta--same-artist');
+    fixture.componentRef.setInput('presentation','album');
+    fixture.componentRef.setInput('albumContext',{id:'other',name:'Álbum',artist:'Artista',artistId:'artist-id'});
+    fixture.detectChanges();expect(meta().classList).not.toContain('track-row__meta--same-album');
+  });
   it('keeps the download indicator outside the title/play button and in the trailing area',()=>{
     const fixture=TestBed.createComponent(TrackRowComponent);fixture.componentRef.setInput('track',track());fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('.track-row__title app-download-badge')).toBeNull();
     expect(fixture.nativeElement.querySelector('.track-row__trailing app-download-badge')).not.toBeNull();
+  });
+  it('offers album favorite management through the menu and an exact compact duration',()=>{
+    const fixture=TestBed.createComponent(TrackRowComponent);
+    fixture.componentRef.setInput('track',{...track(),durationMs:263_000});
+    fixture.componentRef.setInput('presentation','album');fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.track-row__compact-status time').textContent).toBe('4:23');
+    const played=vi.fn();fixture.componentInstance.playTrack.subscribe(played);
+    fixture.nativeElement.querySelector('.track-row__playlist').click();
+    expect(TestBed.inject(QueueMenuService).showFavorite()).toBe(true);
+    expect(played).not.toHaveBeenCalled();expect(toggleFavorite).not.toHaveBeenCalled();
+    TestBed.inject(QueueMenuService).open([track()]);
+    expect(TestBed.inject(QueueMenuService).showFavorite()).toBe(false);
   });
 
   it('highlights and pauses the current playing track instead of selecting it again', () => {
