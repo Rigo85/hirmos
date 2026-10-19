@@ -76,6 +76,11 @@ for(const width of [320,360,390,412,1077,1280])test(`shared music lists at ${wid
   const target=tracks[0]!;
   expect((await page.request.put(`/api/library/tracks/${target.id}/favorite`,{data:{favorite:true}})).ok()).toBe(true);
   await page.goto('/favorites');await checkRows(page,mobile);
+  const actions=await page.locator('.favorites-page .genre-actions').boundingBox();
+  const downloadNote=await page.locator('.favorites-download-note').boundingBox();
+  expect(actions).not.toBeNull();expect(downloadNote).not.toBeNull();
+  expect(downloadNote!.y-(actions!.y+actions!.height)).toBeCloseTo(16,0);
+  await page.screenshot({path:`/tmp/hirmos-favorites-spacing-${width}.png`,animations:'disabled'});
   const row=page.locator('.track-row').filter({has:page.getByRole('button',{name:`Opciones para ${target.title}`,exact:true})});
   if(mobile){
     await row.locator('.track-row__playlist').click();

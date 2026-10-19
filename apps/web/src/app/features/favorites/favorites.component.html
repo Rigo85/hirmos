@@ -9,7 +9,7 @@
         <button class="outline-button play-album-button" type="button" (click)="shuffle()" [disabled]="preparingPlayback()"><app-icon name="shuffle" /> Aleatorio</button>
         <app-download-button [favorites]="true" />
       </div>
-      <p class="muted">La descarga incluye todos tus favoritos actuales, no solo esta página. Se guarda en Descargas → Playlists y no se actualiza ni borra al cambiar el corazón.</p>
+      <p class="muted favorites-download-note">La descarga incluye todos tus favoritos actuales, no solo esta página. Se guarda en Descargas → Playlists y no se actualiza ni borra al cambiar el corazón.</p>
     }
   </header>
 
