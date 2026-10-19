@@ -30,13 +30,43 @@ async function boxes(page: Page) {
   });
 }
 
+async function assertHeaderFits(page: Page) {
+  const width=page.viewportSize()!.width;
+  for(const selector of ['.topbar','.search-box','.search-box input','.search-submit']) {
+    const bounds=await page.locator(selector).boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x+bounds!.width).toBeLessThanOrEqual(width);
+    expect(bounds!.width).toBeGreaterThan(0);
+  }
+  expect(await page.locator('.topbar').evaluate(e=>e.scrollWidth)).toBeLessThanOrEqual(width);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+}
+
+for(const width of [320,360,390,760])test(`mobile header keeps menu and search usable at ${width}px`,async({page})=>{
+  await page.setViewportSize({width,height:900});await albumPage(page);
+  await assertHeaderFits(page);
+  const menu=page.getByRole('button',{name:'Abrir menú',exact:true});
+  await expect(menu).toHaveCSS('width','40px');
+  await menu.click();
+  await expect(page.locator('#primary-sidebar')).toHaveClass(/sidebar--open/);
+  await page.locator('#primary-sidebar').getByRole('button',{name:'Cerrar menú',exact:true}).click();
+  await expect(menu).toHaveAttribute('aria-expanded','false');
+  const input=page.getByRole('searchbox',{name:'Buscar música'});
+  await input.fill('Prueba de continuidad');
+  await page.locator('.search-submit').click();
+  await expect(page).toHaveURL(/\/search\?q=Prueba%20de%20continuidad/);
+  await assertHeaderFits(page);
+  await input.fill('Primera señal');await input.press('Enter');
+  await expect(page).toHaveURL(/\/search\?q=Primera%20se%C3%B1al/);
+  await assertHeaderFits(page);
+});
+
 for(const width of [320,360,390]) {
   test(`mobile album actions align at ${width}px, including download completion`,async({page})=>{
     await page.setViewportSize({width,height:900});await albumPage(page);
     const controls=await boxes(page);expect(controls).toHaveLength(3);
     for(const box of controls){expect(box.y).toBeCloseTo(controls[0]!.y,0);expect(box.height).toBeCloseTo(controls[0]!.height,0);expect(box.height).toBeGreaterThanOrEqual(48);expect(box.scroll).toBeLessThanOrEqual(box.client+1);}
-    // The existing global search bar overflows below 371px; this scoped change
-    // must keep the album header/actions within the viewport without hiding it.
+    await assertHeaderFits(page);
     for(const selector of ['.detail-hero','.album-actions-zone']) {
       const bounds=await page.locator(selector).boundingBox();
       expect(bounds!.x+bounds!.width).toBeLessThanOrEqual(width);
@@ -73,6 +103,7 @@ for(const width of [320,360,390]) {
 test('enlarged text stacks management actions without truncation',async({page})=>{
   await page.setViewportSize({width:320,height:1000});await albumPage(page);
   await page.addStyleTag({content:':root {font-size:30px !important}'});
+  await assertHeaderFits(page);
   const controls=await boxes(page);
   expect(controls[1]!.y).toBeGreaterThan(controls[0]!.y+controls[0]!.height);
   expect(controls[2]!.y).toBeGreaterThan(controls[1]!.y+controls[1]!.height);
@@ -92,6 +123,7 @@ for(const width of [1077,1280])for(const collapsed of [false,true])test(`desktop
   await expect(page.getByRole('button',{name:'Reproducir álbum',exact:true})).toBeVisible();
   await expect(page.getByRole('button',{name:'Añadir álbum a playlist',exact:true})).toBeVisible();
   await expect(page.locator('.player-bar')).toHaveCSS('height','76px');
+  await assertHeaderFits(page);
   async function assertAlignment(){
     const controls=await boxes(page);expect(controls).toHaveLength(3);
     for(const [i,box] of controls.entries()){

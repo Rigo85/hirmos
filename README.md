@@ -175,8 +175,10 @@ En la isla, portadas y letras nunca consultan servidores. Fallar estos auxiliare
 no invalida música descargada. Los tamaños por canción corresponden al audio;
 los auxiliares consumen también cuota del navegador.
 
-Este frente sigue en validación: faltan endurecimiento de recuperación y
-concurrencia, pruebas físicas Android Chrome/Brave y de preparación interrumpida.
+La recuperación y la concurrencia cuentan con pruebas automatizadas y ensayos
+aislados. Sigue pendiente la validación física y prolongada en Android
+Chrome/Brave, incluidos cortes durante la preparación. Esas pruebas no se dan
+por superadas únicamente por compilar o desplegar la aplicación.
 No hay conversión de formatos. El reporte offline no se envía por recuperar red
 mientras se permanece en la isla. No sincroniza cola, posición ni favoritos.
 Sus checkpoints normalmente se guardan cada5s: un cierre forzado puede perder el
@@ -407,6 +409,18 @@ El control local `POST http://127.0.0.1:3314/__fixture/state` acepta JSON
 `stall` y `corrupt`. `SIGUSR2` al proceso de este fixture corta sus sockets, no
 el audio HTTP. Detenerlo y retirar únicamente su base/contenedor desechable al
 terminar. No es parte del servidor productivo ni una prueba automática completa.
+
+Con ese laboratorio activo y el build web actualizado, la regresión visual de
+álbum y encabezado se ejecuta desde la raíz del repositorio:
+
+```bash
+HIRMOS_ALBUM_LAYOUT_LAB=1 HIRMOS_E2E_ORIGIN=http://127.0.0.1:3313 npm run e2e -w @hirmos/web -- album-mobile.spec.ts
+```
+
+Comprueba desbordamiento móvil (320/360/390 px), búsqueda y menú hasta 760 px,
+texto ampliado, botones de descarga y escritorio con menú expandido/contraído.
+Usa cuentas y descargas sintéticas en contextos aislados de Chrome; no sustituye
+la validación física en Android. Rechaza orígenes distintos del laboratorio.
 
 El protocolo de reproducción v5 y las playlists requieren las migraciones `0013` a `0019`, API y web de la
 misma versión. Las pestañas anteriores deben recargarse; no se admiten comandos
