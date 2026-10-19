@@ -5,7 +5,15 @@ import type { Track } from '@hirmos/contracts';
 export class QueueMenuService {
   readonly tracks=signal<Track[]|null>(null);
   readonly showFavorite=signal(false);
-  open(tracks:Track[],showFavorite=false):void {
-    if(tracks.length){this.showFavorite.set(showFavorite && tracks.length===1);this.tracks.set(tracks);}
+  readonly favoriteAction=signal<(() => Promise<void>) | null>(null);
+  open(tracks:Track[],showFavorite=false,favoriteAction:(() => Promise<void>) | null=null):void {
+    if(tracks.length){
+      this.showFavorite.set(showFavorite && tracks.length===1);
+      this.favoriteAction.set(this.showFavorite()?favoriteAction:null);
+      this.tracks.set(tracks);
+    }
+  }
+  close():void {
+    this.tracks.set(null);this.showFavorite.set(false);this.favoriteAction.set(null);
   }
 }

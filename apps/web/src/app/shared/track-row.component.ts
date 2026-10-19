@@ -1,5 +1,5 @@
 import { DecimalPipe } from '@angular/common';
-import { Component, computed, inject, input, output } from '@angular/core';
+import { Component, DestroyRef, computed, inject, input, output } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import type { Album, Track } from '@hirmos/contracts';
 import { PlaybackSyncService } from '../core/playback-sync.service';
@@ -18,6 +18,7 @@ import { DownloadBadgeComponent } from './download-badge.component';
     '[class.track-row--playing]': 'isPlaying()',
     '[class.track-row--recent]': "presentation() === 'recent'",
     '[class.track-row--album]': "presentation() === 'album'",
+    '[class.track-row--compact]': "presentation() !== 'recent'",
     '[attr.aria-current]': "isCurrent() ? 'true' : null",
   },
   template: `
@@ -43,16 +44,17 @@ import { DownloadBadgeComponent } from './download-badge.component';
           @else { <span class="track-row__album-name">{{ track().album }}</span> }
         }
       </div>
-      @if(presentation() === 'album') {
+      @if(presentation() !== 'recent') {
         <div class="track-row__compact-status">
-          @if(showDuration()){<time>{{ durationLabel() }}</time>}
+          @if(trailingText()){<span class="track-row__metric">{{ trailingText() }}</span>}
+          @else if(showDuration()){<time>{{ durationLabel() }}</time>}
           <app-download-badge [reference]="track().id" />
           @if(isFavorite()){<span class="track-row__favorite-indicator" aria-label="En favoritos"><app-icon name="heart-filled" /></span>}
         </div>
       }
     </div>
     <div class="track-row__trailing">
-      <button class="icon-button track-row__playlist" type="button" (click)="queueMenu.open([track()], presentation() === 'album')" [attr.aria-label]="'Opciones para ' + track().title" title="Opciones de la canción"><app-icon name="more" /></button>
+      <button class="icon-button track-row__playlist" type="button" (click)="openOptions()" [attr.aria-label]="'Opciones para ' + track().title" title="Opciones de la canción"><app-icon name="more" /></button>
       <app-download-badge [reference]="track().id" />
       @if (trailingText()) { <time>{{ trailingText() }}</time> }
       @else if (showDuration()) { <time>{{ track().durationMs / 60000 | number:'1.0-0' }} min</time> }
@@ -64,6 +66,15 @@ export class TrackRowComponent {
   protected readonly queueMenu=inject(QueueMenuService);
   private readonly playback = inject(PlaybackSyncService);
   protected readonly favorites = inject(FavoritesService);
+  private readonly destroyRef = inject(DestroyRef);
+  private menuFavoriteAction: (() => Promise<void>) | null = null;
+  constructor() {
+    this.destroyRef.onDestroy(() => {
+      // A confirmed removal from Favorites destroys its row. Do not leave an
+      // orphan menu capable of invoking the removed row again.
+      if (this.menuFavoriteAction && this.queueMenu.favoriteAction() === this.menuFavoriteAction) this.queueMenu.close();
+    });
+  }
   public readonly track = input.required<Track>();
   public readonly position = input<number | null>(null);
   public readonly showCover = input(false);
@@ -103,8 +114,14 @@ export class TrackRowComponent {
     this.playTrack.emit(this.track());
   }
 
-  protected async toggleFavorite(): Promise<void> {
-    const favorite = await this.favorites.toggle(this.track());
-    if (favorite !== null) this.favoriteChange.emit(favorite);
+  protected openOptions(): void {
+    const track=this.track();
+    this.menuFavoriteAction=() => this.toggleFavorite(track);
+    this.queueMenu.open([track], this.presentation() !== 'recent', this.menuFavoriteAction);
+  }
+
+  protected async toggleFavorite(track=this.track()): Promise<void> {
+    const favorite = await this.favorites.toggle(track);
+    if (favorite !== null && !this.destroyRef.destroyed && this.track().id === track.id) this.favoriteChange.emit(favorite);
   }
 }

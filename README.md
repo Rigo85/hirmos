@@ -449,6 +449,23 @@ contraído: metadatos, favorito directo, controles alineados y barra de 76 px.
 El diseño compacto y las tarjetas de recientes se aplican solo en móvil;
 en álbum móvil, el favorito se gestiona desde las opciones de cada canción.
 
+Las listas compartidas (populares de artista, Biblioteca→Canciones, búsqueda,
+Favoritos, géneros, actividad y canciones de hábitos) usan también la fila
+compacta móvil. Conservan sus vínculos y métricas; el carrusel de recientes
+tiene su propia distribución. Escritorio conserva metadatos y favorito directo.
+Quitar desde el menú de Favoritos retira la fila solo tras confirmación; ante
+fallo conserva la canción. Al retirarla se cierra su menú.
+
+```bash
+HIRMOS_FIXTURE_CATALOG_FILE=/ruta/privada/muestra.json HIRMOS_E2E_ORIGIN=http://127.0.0.1:3313 npm run e2e -w @hirmos/web -- shared-track-lists.spec.ts catalog-layout.spec.ts
+```
+
+La regresión de listas recorre las ocho vistas a320/360/390/412 y1077/1280px,
+incluye scroll de populares, texto ampliado, navegación al álbum y favorito
+desde menú/directo. Usa datos visuales simulados en actividad/hábitos/género,
+sin insertar escuchas ni conectar el laboratorio a producción. Playlists,
+cola y Descargas tienen componentes propios; no se rediseñan en este ajuste.
+
 El protocolo de reproducción v5 y las playlists requieren las migraciones `0013` a `0019`, API y web de la
 misma versión. Las pestañas anteriores deben recargarse; no se admiten comandos
 antiguos sin identidad de ejecución. El registro de actividad se confirma junto

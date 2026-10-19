@@ -8,6 +8,7 @@ import {SessionStore} from '../../core/session.store';
 import {signal} from '@angular/core';
 import {provideRouter} from '@angular/router';
 import {DownloadsService} from '../../offline/downloads.service';
+import {QueueMenuService} from '../../core/queue-menu.service';
 
 describe('FavoritesComponent', () => {
   const selectFavorites = vi.fn();
@@ -69,6 +70,20 @@ describe('FavoritesComponent', () => {
     expect(f.nativeElement.textContent).toContain('no solo esta página');
     expect(f.nativeElement.querySelector('app-download-button a').getAttribute('href')).toBe('/downloads');
     http.expectNone(r=>r.url==='/api/library/favorites');
+  });
+  for(const failed of [false,true])it(`menu removal ${failed?'keeps the row on failure':'removes the confirmed favorite'}`,async()=>{
+    const f=TestBed.createComponent(FavoritesComponent);f.detectChanges();
+    const http=TestBed.inject(HttpTestingController);
+    http.expectOne(r=>r.url==='/api/library/favorites').flush({tracks:[track('one')],nextCursor:null});
+    await f.whenStable();f.detectChanges();
+    f.nativeElement.querySelector('.track-row__playlist').click();
+    const done=TestBed.inject(QueueMenuService).favoriteAction()!();
+    const request=http.expectOne('/api/library/tracks/one/favorite');
+    if(failed)request.flush({}, {status:503,statusText:'Unavailable'});
+    else request.flush({reference:'one',favorite:false});
+    await done;f.detectChanges();
+    expect(f.nativeElement.querySelectorAll('.track-row')).toHaveLength(failed?1:0);
+    expect(selectFavorites).not.toHaveBeenCalled();
   });
 });
 

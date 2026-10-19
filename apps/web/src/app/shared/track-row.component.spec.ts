@@ -106,6 +106,44 @@ describe('TrackRowComponent', () => {
     TestBed.inject(QueueMenuService).open([track()]);
     expect(TestBed.inject(QueueMenuService).showFavorite()).toBe(false);
   });
+  it('uses compact presentation for standard lists and preserves habit metrics',()=>{
+    const fixture=TestBed.createComponent(TrackRowComponent);
+    fixture.componentRef.setInput('track',track());
+    fixture.componentRef.setInput('trailingText','123 h 45 min · 987 escuchas');fixture.detectChanges();
+    expect(fixture.nativeElement.classList).toContain('track-row--compact');
+    expect(fixture.nativeElement.querySelector('.track-row__metric').textContent).toContain('987 escuchas');
+    expect(fixture.nativeElement.querySelector('.track-row__compact-status time')).toBeNull();
+    fixture.componentRef.setInput('presentation','recent');fixture.detectChanges();
+    expect(fixture.nativeElement.classList).not.toContain('track-row--compact');
+    expect(fixture.nativeElement.querySelector('.track-row__compact-status')).toBeNull();
+  });
+  it('keeps search duration hidden and metadata available in a compact row',()=>{
+    const fixture=TestBed.createComponent(TrackRowComponent);
+    fixture.componentRef.setInput('track',track());fixture.componentRef.setInput('showDuration',false);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.track-row__compact-status time')).toBeNull();
+    expect(fixture.nativeElement.querySelectorAll('.track-row__meta a')).toHaveLength(2);
+  });
+  it('preserves favoriteChange through the menu and releases the action when closed',async()=>{
+    const fixture=TestBed.createComponent(TrackRowComponent);
+    fixture.componentRef.setInput('track',track());fixture.detectChanges();
+    const changed=vi.fn();fixture.componentInstance.favoriteChange.subscribe(changed);
+    fixture.nativeElement.querySelector('.track-row__playlist').click();
+    const menu=TestBed.inject(QueueMenuService);
+    expect(menu.showFavorite()).toBe(true);
+    await menu.favoriteAction()!();expect(changed).toHaveBeenCalledExactlyOnceWith(true);
+    menu.close();expect(menu.favoriteAction()).toBeNull();expect(menu.tracks()).toBeNull();
+  });
+  it('does not emit favorite changes to a row destroyed during the request',async()=>{
+    const fixture=TestBed.createComponent(TrackRowComponent);
+    fixture.componentRef.setInput('track',track());fixture.detectChanges();
+    const changed=vi.fn();fixture.componentInstance.favoriteChange.subscribe(changed);
+    fixture.nativeElement.querySelector('.track-row__playlist').click();
+    const done=TestBed.inject(QueueMenuService).favoriteAction()!();fixture.destroy();
+    await done;expect(changed).not.toHaveBeenCalled();
+    expect(TestBed.inject(QueueMenuService).tracks()).toBeNull();
+    expect(TestBed.inject(QueueMenuService).favoriteAction()).toBeNull();
+  });
 
   it('highlights and pauses the current playing track instead of selecting it again', () => {
     snapshot.set({ currentTrackRef: 'track-id', status: 'playing' });

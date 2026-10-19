@@ -186,7 +186,10 @@ const provider = createServer(async (req, res) => {
     getAlbumList2: { albumList2: { album: albums.slice(Number(target.searchParams.get('offset')||0),Number(target.searchParams.get('offset')||0)+Number(target.searchParams.get('size')||500)) } },
     getAlbum: { album: { ...(albums.find(a=>a.id===id)??album), song: songs.filter(t=>t.albumId===(id??album.id)) } },
     getArtist: { artist: { ...(artists.find(a=>a.id===id)??artist), album: albums.filter(a=>a.artistId===(id??artist.id)) } },
-    getArtistInfo2: { artistInfo2: {} }, getTopSongs: { topSongs: { song: songs } },
+    getArtistInfo2: { artistInfo2: trackLayoutLab?{biography:'Biografía sintética para comprobar la columna de canciones populares. No es información del artista.'}:{} },
+    getTopSongs: { topSongs: { song: trackLayoutLab?songs.filter(song=>
+      albums.find(a=>a.id===song.albumId)?.artistId === (id??artists.find(a=>a.name===target.searchParams.get('artist'))?.id)
+    ).slice(0,50):songs } },
     getGenres: { genres: { genre: [] } }, getRandomSongs: { randomSongs: { song: songs } },
     search3: { searchResult3: { song: Number(target.searchParams.get('songOffset')) ? [] : songs, artist: artists, album: albums } },
     getSong: { song: songs.find(song => song.id === id) }, getLyrics: { lyrics: {} },

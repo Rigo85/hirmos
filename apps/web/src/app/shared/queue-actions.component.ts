@@ -14,7 +14,7 @@ import { FavoritesService } from '../core/favorites.service';
     } @else { <p>{{ menuService.tracks()?.length }} canciones seleccionadas</p> }
     @if(menuService.showFavorite() && menuService.tracks()?.length === 1) {
       @let track = menuService.tracks()![0]!;
-      <button (click)="favorites.toggle(track)" [disabled]="busy() || favorites.isPending(track.id)"
+      <button (click)="toggleFavorite()" [disabled]="busy() || favorites.isPending(track.id)"
         [attr.aria-pressed]="favorites.isFavorite(track)">
         {{ favorites.isFavorite(track) ? 'Quitar de favoritos' : 'Añadir a favoritos' }}
       </button>
@@ -50,11 +50,17 @@ export class QueueActionsComponent {
   private readonly replace=viewChild<ElementRef<HTMLDialogElement>>('replace');
   protected readonly busy=signal(false);
   constructor(){
-    inject(DestroyRef).onDestroy(()=>{this.menuService.tracks.set(null);this.playback.replacement.set(null);});
+    inject(DestroyRef).onDestroy(()=>{this.menuService.close();this.playback.replacement.set(null);});
     effect(()=>{const dialog=this.menu()?.nativeElement;if(this.menuService.tracks()){if(dialog&&!dialog.open)dialog.showModal();}else if(dialog?.open)dialog.close();});
     effect(()=>{const dialog=this.replace()?.nativeElement;if(this.playback.replacement()){if(dialog&&!dialog.open)dialog.showModal();}else if(dialog?.open)dialog.close();});
   }
-  protected closeMenu():void {this.menuService.tracks.set(null);}
+  protected closeMenu():void {this.menuService.close();}
+  protected async toggleFavorite():Promise<void>{
+    const track=this.menuService.tracks()?.[0];
+    if(!track || this.busy() || this.favorites.isPending(track.id))return;
+    const action=this.menuService.favoriteAction();
+    if(action)await action();else await this.favorites.toggle(track);
+  }
   protected async add(placement:QueuePlacement):Promise<void>{
     const tracks=this.menuService.tracks();if(!tracks||this.busy())return;
     this.busy.set(true);try{await this.playback.addTracks(tracks,placement);this.closeMenu();}finally{this.busy.set(false);}
