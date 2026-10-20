@@ -188,6 +188,25 @@ img.mini-cover { width:48px; height:48px; object-fit:cover; }
 .track-row__favorite:hover:not(:disabled) { color:var(--text); background:rgba(255,255,255,.06); transform:scale(1.06); }
 .track-row__favorite--active { color:var(--accent-bright); }
 .track-row__favorite:disabled { opacity:.5; cursor:wait; }
+/* Recent cards share one layout at every viewport; controls never squeeze identity. */
+.track-row.track-row--recent {
+  grid-template-columns:48px minmax(0,1fr); column-gap:8px; row-gap:0;
+  align-items:start; min-height:0; padding:10px;
+}
+.track-row--recent .track-row__copy { display:block; }
+.track-row--recent .track-row__title {
+  display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
+  white-space:normal; overflow-wrap:anywhere; font-size:1rem; line-height:1.4;
+  width:100%; min-height:44px;
+}
+.track-row--recent .track-row__meta { display:grid; gap:2px; margin-top:0; font-size:.8rem; }
+.track-row--recent .track-row__separator { display:none; }
+.track-row--recent .track-row__meta a { min-height:24px; display:flex; align-items:center; }
+.track-row--recent .track-row__trailing { grid-column:1 / -1; margin-top:4px; min-width:0; gap:4px; }
+.track-row--recent .track-row__trailing time { margin-left:auto; font-size:.8rem; }
+.track-row--recent .track-row__trailing app-download-badge:empty { display:none; }
+.track-row--recent .track-row__trailing button { flex:0 0 44px; width:44px; height:44px; }
+.track-row--recent .track-cover-control app-icon { opacity:1; }
 .section-heading h2 { margin: 0; font-size: 26px; font-weight: 720; letter-spacing:-.025em; }
 .section-heading button, .section-heading > a { border: 0; color: var(--muted); background: transparent; cursor: pointer; font-size: 13px; }
 .album-grid { display: grid; gap: clamp(13px, 2vw, 23px); margin-top: 19px; }
@@ -335,30 +354,28 @@ img.mini-cover { width:48px; height:48px; object-fit:cover; }
   .music-section { margin-top:35px; }.album-grid--five { grid-template-columns:repeat(2,minmax(0,1fr)); }.album-grid--five .album-card:last-child { display:grid; }.album-grid--four { display:flex; overflow-x:auto; scroll-snap-type:x mandatory; }.album-card--wide { flex:0 0 250px; scroll-snap-align:start; }
   .track-carousel { grid-auto-columns:minmax(250px,82vw); }.carousel-button { display:none; }.section-actions > a { margin-left:0; }
   /* Context-specific mobile rows: secondary actions never constrain the title. */
-  .track-row:is(.track-row--recent,.track-row--compact) {
+  .track-row.track-row--compact {
     grid-template-columns:48px minmax(0,1fr); column-gap:8px; row-gap:0;
     align-items:start; min-height:0;
   }
-  .track-row--recent { padding:10px; }
-  .track-row--recent .track-row__trailing { grid-column:1 / -1; margin-top:4px; }
-  .track-row:is(.track-row--recent,.track-row--compact) .track-row__copy { display:block; }
-  .track-row:is(.track-row--recent,.track-row--compact) .track-row__title {
+  .track-row.track-row--compact .track-row__copy { display:block; }
+  .track-row.track-row--compact .track-row__title {
     display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
     white-space:normal; overflow-wrap:anywhere; font-size:1rem; line-height:1.4;
     width:100%; min-height:44px;
   }
-  .track-row:is(.track-row--recent,.track-row--compact) .track-row__meta {
+  .track-row.track-row--compact .track-row__meta {
     display:grid; gap:2px; margin-top:0; font-size:.8rem;
   }
-  .track-row:is(.track-row--recent,.track-row--compact) .track-row__separator { display:none; }
-  .track-row:is(.track-row--recent,.track-row--compact) .track-row__meta a { min-height:24px; display:flex; align-items:center; }
+  .track-row.track-row--compact .track-row__separator { display:none; }
+  .track-row.track-row--compact .track-row__meta a { min-height:24px; display:flex; align-items:center; }
   .track-row.track-row--album .track-row__meta--same-album .track-row__album-name,
   .track-row.track-row--album .track-row__meta--same-artist .track-row__artist,
   .track-row.track-row--album .track-row__meta--same-artist.track-row__meta--same-album { display:none; }
-  .track-row:is(.track-row--recent,.track-row--compact) .track-row__trailing { min-width:0; gap:4px; }
-  .track-row:is(.track-row--recent,.track-row--compact) .track-row__trailing time { margin-left:auto; font-size:.8rem; }
-  .track-row:is(.track-row--recent,.track-row--compact) .track-row__trailing app-download-badge:empty { display:none; }
-  .track-row:is(.track-row--recent,.track-row--compact) .track-row__trailing button { flex:0 0 44px; width:44px; height:44px; }
+  .track-row.track-row--compact .track-row__trailing { min-width:0; gap:4px; }
+  .track-row.track-row--compact .track-row__trailing time { margin-left:auto; font-size:.8rem; }
+  .track-row.track-row--compact .track-row__trailing app-download-badge:empty { display:none; }
+  .track-row.track-row--compact .track-row__trailing button { flex:0 0 44px; width:44px; height:44px; }
   /* Shared lists are compact on mobile; recent cards retain their own layout. */
   .track-row.track-row--compact { grid-template-columns:48px minmax(0,1fr) 44px; min-height:64px; padding:8px 4px; align-items:center; }
   .track-row--compact .track-row__trailing { align-self:center; }
@@ -371,7 +388,6 @@ img.mini-cover { width:48px; height:48px; object-fit:cover; }
   .track-row--compact .track-cover-control app-icon { opacity:1; }
   .track-row__favorite-indicator { display:flex; color:var(--accent-bright); }
   .track-row__favorite-indicator app-icon { width:12px; height:12px; }
-  .track-row--recent .track-cover-control app-icon { opacity:1; }
   .home-activity-section .section-actions { flex-shrink:0; }
   .home-activity-section .section-actions > a { white-space:nowrap; }
   .queue-panel { bottom:0; width:min(350px,100%); }

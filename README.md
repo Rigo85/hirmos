@@ -446,8 +446,10 @@ artificialmente: este modo no valida estadísticas reales.
 la presentación con la muestra, incluidas portadas y ausencia de requests externos.
 También verifica escritorio a 1077/1280/1920 px con menú lateral expandido y
 contraído: metadatos, favorito directo, controles alineados y barra de 76 px.
-El diseño compacto y las tarjetas de recientes se aplican solo en móvil;
-en álbum móvil, el favorito se gestiona desde las opciones de cada canción.
+Las tarjetas de recientes comparten distribución en móvil y escritorio:
+portada e identidad arriba, controles debajo y título de hasta dos líneas.
+El diseño compacto de las listas sigue limitado a móvil; en álbum móvil,
+el favorito se gestiona desde las opciones de cada canción.
 
 Las listas compartidas (populares de artista, Biblioteca→Canciones, búsqueda,
 Favoritos, géneros, actividad y canciones de hábitos) usan también la fila
