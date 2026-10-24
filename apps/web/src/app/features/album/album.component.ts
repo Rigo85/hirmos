@@ -10,8 +10,9 @@ import { TrackRowComponent } from '../../shared/track-row.component';
 import { PlaylistsService } from '../../core/playlists.service';
 import { QueueMenuService } from '../../core/queue-menu.service';
 import { DownloadButtonComponent } from '../../shared/download-button.component';
+import { LazyCoverDirective } from '../../shared/lazy-cover.directive';
 
-@Component({ selector: 'app-album', imports: [RouterLink, AppIconComponent, TrackRowComponent, DownloadButtonComponent], templateUrl: './album.component.html', styleUrl: './album.component.scss' })
+@Component({ selector: 'app-album', imports: [RouterLink, AppIconComponent, TrackRowComponent, DownloadButtonComponent, LazyCoverDirective], templateUrl: './album.component.html', styleUrl: './album.component.scss' })
 export class AlbumComponent {
   protected readonly playlists=inject(PlaylistsService);
   protected readonly queueMenu=inject(QueueMenuService);

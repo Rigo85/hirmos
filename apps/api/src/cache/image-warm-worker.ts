@@ -128,5 +128,6 @@ function retryDelay(error: unknown, attempts: number): number {
     && ![408, 425, 429].includes(error.status)) return PERMANENT_RETRY_MS;
   if (error instanceof ImageCachePendingError) return Math.max(error.retryAfterMs, 5_000);
   const base = Math.min(6 * 60 * 60 * 1_000, 30_000 * (2 ** Math.min(10, attempts - 1)));
-  return base + Math.round(base * 0.25 * Math.random());
+  return Math.max(base + Math.round(base * 0.25 * Math.random()),
+    error instanceof MusicSourceHttpError ? error.retryAfterMs ?? 0 : 0);
 }

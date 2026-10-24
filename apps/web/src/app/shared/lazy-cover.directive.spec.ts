@@ -1,13 +1,13 @@
-import { Component } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { LazyCoverDirective } from './lazy-cover.directive';
 
 @Component({
   imports: [LazyCoverDirective],
-  template: '<img [appLazyCover]="cover" [coverSize]="320" alt="Portada">',
+  template: '<img [appLazyCover]="cover()" [coverSize]="320" alt="Portada">',
 })
 class LazyCoverHostComponent {
-  public cover = '/api/music/covers/reference-a';
+  public cover = signal('/api/music/covers/reference-a');
 }
 
 class IntersectionObserverStub {
@@ -105,5 +105,80 @@ describe('LazyCoverDirective', () => {
     image.dispatchEvent(new Event('load'));
     fixture.destroy();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:hirmos-cover');
+  });
+
+  it('revalidates a warm image with its ETag and keeps its Blob on 304', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/png', etag: '"v1"' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 304 }));
+    const fixture = TestBed.createComponent(LazyCoverHostComponent); fixture.detectChanges();
+    IntersectionObserverStub.latest.emit(true);
+    const image = fixture.nativeElement.querySelector('img') as HTMLImageElement;
+    await vi.waitFor(() => expect(image.src).toContain('blob:'));
+    image.dispatchEvent(new Event('load'));
+    await vi.advanceTimersByTimeAsync(31000);
+    window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1]![1]).toMatchObject({ cache: 'no-cache', headers: { 'If-None-Match': '"v1"' } });
+    expect(URL.createObjectURL).toHaveBeenCalledOnce();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    fixture.destroy();
+  });
+
+  it('checks a pending refresh even after the old image loaded, then displays its replacement', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(new Uint8Array([1]), {
+        headers: { 'content-type': 'image/png', etag: '"v1"', 'x-hirmos-image-refresh': 'pending' },
+      }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([2]), { headers: { 'content-type': 'image/png', etag: '"v2"' } }));
+    const fixture = TestBed.createComponent(LazyCoverHostComponent); fixture.detectChanges();
+    const image = fixture.nativeElement.querySelector('img') as HTMLImageElement;
+    IntersectionObserverStub.latest.emit(true);
+    await vi.waitFor(() => expect(image.src).toContain('blob:'));
+    image.dispatchEvent(new Event('load'));
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledTimes(2));
+    image.dispatchEvent(new Event('load'));
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fixture.destroy();
+  });
+
+  it('ignores a late response after navigating to a different cover', async () => {
+    let finish!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([2]), { headers: { 'content-type': 'image/png', etag: '"new"' } }));
+    const fixture = TestBed.createComponent(LazyCoverHostComponent); fixture.detectChanges();
+    IntersectionObserverStub.latest.emit(true);
+    fixture.componentInstance.cover.set('/api/music/covers/reference-b');
+    fixture.changeDetectorRef.markForCheck(); fixture.detectChanges();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledOnce());
+    expect(String(fetchMock.mock.calls[1]![0])).toContain('reference-b');
+    expect(fetchMock.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+    finish(new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/png' } }));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(URL.createObjectURL).toHaveBeenCalledOnce();
+    fixture.destroy();
+  });
+
+  it('preserves a loaded cover when its revalidation fails and does not retry offscreen', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/png', etag: '"v1"' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 503, headers: { 'retry-after': '120' } }));
+    const fixture = TestBed.createComponent(LazyCoverHostComponent); fixture.detectChanges();
+    const image = fixture.nativeElement.querySelector('img') as HTMLImageElement;
+    IntersectionObserverStub.latest.emit(true);
+    await vi.waitFor(() => expect(image.src).toContain('blob:'));
+    image.dispatchEvent(new Event('load'));
+    await vi.advanceTimersByTimeAsync(31000); window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(image.src).toContain('blob:');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    IntersectionObserverStub.latest.emit(false);
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fixture.destroy();
   });
 });

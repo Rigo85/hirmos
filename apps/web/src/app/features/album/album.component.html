@@ -4,7 +4,7 @@
   @if (album(); as item) {
     <header class="detail-hero">
       <div class="cover detail-cover">
-        @if (item.coverUrl) { <img [src]="item.coverUrl" [alt]="'Carátula de ' + item.name"> }
+        @if (item.coverUrl) { <img [appLazyCover]="item.coverUrl" [coverSize]="320" [alt]="'Carátula de ' + item.name"> }
         @else { <span>{{ item.name.slice(0, 2).toUpperCase() }}</span> }
       </div>
       <div class="album-copy">

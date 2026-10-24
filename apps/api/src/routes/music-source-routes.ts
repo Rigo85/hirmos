@@ -488,10 +488,15 @@ export async function registerMusicSourceRoutes(
     const size = parseCoverSize(requestedSize);
     try {
       const media = await service.cover(reference, size, AbortSignal.timeout(15_000));
+      // Keep browser bytes, but validate their content version on reuse. A
+      // previous max-age response is bypassed by the lazy-cover fetch as well.
+      reply.header('cache-control', 'private, no-cache');
+      if (media.imageRefreshPending) reply.header('x-hirmos-image-refresh', 'pending');
       if (media.etag && request.headers['if-none-match'] === media.etag) {
+        void media.body.cancel().catch(() => undefined);
         return reply.code(304).header('etag', media.etag).send();
       }
-      return sendMedia(reply, media, 'private, max-age=86400');
+      return sendMedia(reply, media, 'private, no-cache');
     } catch (error) {
       return mediaFailure(request, reply, error);
     }

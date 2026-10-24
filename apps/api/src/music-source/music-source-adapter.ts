@@ -90,6 +90,7 @@ export interface SourceMedia {
   contentRange: string | null;
   acceptRanges: string | null;
   etag?: string | null;
+  imageRefreshPending?: boolean;
 }
 
 export interface SourceLyrics {

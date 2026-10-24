@@ -444,7 +444,7 @@ export class MusicSourceService {
     });
   }
 
-  public async warmCover(sourceId: string, remoteId: string, size = 320): Promise<void> {
+  public async warmCover(sourceId: string, remoteId: string, size = 320, force = false): Promise<void> {
     if (!this.imageCache) throw new MusicSourceUnavailableError('Image cache is not configured');
     const source = await this.requireCurrent();
     if (source.id !== sourceId) {
@@ -454,7 +454,7 @@ export class MusicSourceService {
     await this.imageCache.warm({
       sourceId, remoteId, size,
       load: (fillSignal) => adapter.getCoverArt(remoteId, size, fillSignal),
-    });
+    }, force);
   }
 
   public async warmArtistMetadata(sourceId: string, remoteId: string): Promise<void> {

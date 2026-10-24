@@ -333,6 +333,36 @@ Los temporales cuentan para cuota pero no se borran ciegamente; letras vigentes
 y miniaturas protegidas no se expulsan para cumplirla. Los backups mantienen
 sus letras referenciadas mientras copian el snapshot.
 
+La revalidación de imágenes requiere migración `0023`. Una foto se comprueba
+de nuevo a los 30 días; los avatares genéricos reconocidos por hash usan plazos
+de 1, 2, 4 y 7 días, con jitter. No se reconoce cualquier placeholder ni se
+identifican automáticamente artistas homónimos. Un placeholder conocido o un
+error no reemplaza una foto disponible; el intento y el último objeto se
+registran por separado. Los errores recuperables usan backoff y respetan
+`Retry-After`. La precarga y las consultas comparten trabajo; PostgreSQL rechaza
+publicaciones que intenten reemplazar una revisión más nueva.
+
+Las respuestas de portada usan ETag y `private, no-cache`: se puede conservar
+el contenido, pero debe revalidarse. Las imágenes con carga diferida, incluidas
+las cabeceras de artista y álbum, revisan al volver a la pestaña si pasaron
+30 segundos. La comprobación puede devolver `304` sin descargar la imagen;
+no fuerza una recarga de la aplicación ni modifica descargas offline.
+
+Para corregir una imagen puntual, corregir primero la fuente y revisar el
+resultado. Con API compilada y las variables `DATABASE_URL`,
+`DATA_ENCRYPTION_KEY` y `HIRMOS_CACHE_DIR` configuradas en el entorno:
+
+```bash
+npm run images:refresh-artist -- --artist ARTIST_ID --preview /tmp/artist-preview.jpg
+npm run images:refresh-artist -- --artist ARTIST_ID --apply --expected-hash SHA256_REVISADO
+```
+
+El primer comando solo consulta; el segundo refresca la variante 320 y las
+variantes 128/640 ya existentes, incluso si la caché estaba fresca. No cambia
+proveedores ni sube imágenes a la fuente. `npm run test:images:pg` verifica la
+política y carreras entre instancias en un esquema temporal de la base local
+`hirmos_core_test`, indicada por `HIRMOS_TEST_DATABASE_URL`.
+
 ### Pruebas transaccionales de reproducción
 
 `npm run test:sessions:pg` usa también `HIRMOS_TEST_DATABASE_URL` local/desechable

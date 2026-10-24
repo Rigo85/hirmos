@@ -46,7 +46,7 @@ try {
     body: new ReadableStream({ start(controller) { controller.enqueue(data); controller.close(); } }) });
   await cache.warm({ sourceId: source, remoteId: 'cover', size: 320, load });
   const old = (await db.query('SELECT * FROM cache_entries')).rows[0];
-  await db.query("UPDATE cache_entries SET fetched_at=now()-interval '31 days'");
+  await db.query("UPDATE cache_entries SET fetched_at=now()-interval '31 days', next_refresh_at=now()-interval '1 second'");
   data = new Uint8Array([4, 5, 6, 7]);
   await cache.warm({ sourceId: source, remoteId: 'cover', size: 320, load });
   await run();

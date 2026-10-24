@@ -42,7 +42,7 @@ export class ImageWarmRepository {
                AND entry.source_id = item.source_id
                AND entry.remote_entity_id = item.remote_id
                AND entry.variant = $1::text
-               AND entry.fetched_at >= now() - interval '30 days'
+               AND COALESCE(entry.next_refresh_at, entry.fetched_at + interval '30 days') > now()
           )
           GROUP BY item.source_id, item.remote_id
        )
@@ -53,7 +53,7 @@ export class ImageWarmRepository {
               ), priority
          FROM candidates
        ON CONFLICT (kind, dedupe_key) DO UPDATE SET
-         status = 'pending', available_at = now(), lease_owner = NULL,
+         status = 'pending', attempts = 0, available_at = now(), lease_owner = NULL,
          lease_expires_at = NULL, last_error_code = NULL, updated_at = now()
        WHERE background_jobs.status = 'completed'
        RETURNING id`,
@@ -169,7 +169,7 @@ export class ImageWarmRepository {
           SET status = 'completed', lease_owner = NULL, lease_expires_at = NULL,
               last_error_code = NULL, updated_at = now()
         WHERE job.kind = 'image_warm'
-          AND job.status <> 'completed'
+          AND job.status IN ('pending', 'failed')
           AND job.payload->>'size' = $1::text
           AND EXISTS (
             SELECT 1 FROM cache_entries entry
@@ -177,7 +177,7 @@ export class ImageWarmRepository {
                AND entry.source_id = (job.payload->>'sourceId')::uuid
                AND entry.remote_entity_id = job.payload->>'remoteId'
                AND entry.variant = job.payload->>'size'
-               AND entry.fetched_at >= now() - interval '30 days'
+               AND COALESCE(entry.next_refresh_at, entry.fetched_at + interval '30 days') > now()
           )`,
       [size],
     );

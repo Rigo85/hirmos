@@ -6,6 +6,10 @@ export interface CachedObjectEntry {
   contentType: string;
   byteLength: number;
   fetchedAt?: Date;
+  nextRefreshAt?: Date | null;
+  revision?: string;
+  imageLastResult?: 'image' | 'placeholder' | 'error' | null;
+  imageAttempts?: number;
 }
 
 export interface CacheEvictionCandidate extends CachedObjectEntry {
@@ -61,9 +65,11 @@ export class CacheRepository {
   public async get(namespace: 'image' | 'lyrics' | 'provider' | 'analysis', key: string) {
     const result = await this.db.query<{
       relative_path: string; content_hash: string; content_type: string; byte_length: string;
-      fetched_at: Date;
+      fetched_at: Date; next_refresh_at: Date | null; revision: string;
+      image_last_result: CachedObjectEntry['imageLastResult']; image_attempts: number;
     }>(
-      `SELECT relative_path, content_hash, content_type, byte_length, fetched_at
+      `SELECT relative_path, content_hash, content_type, byte_length, fetched_at,
+              next_refresh_at, revision::text, image_last_result, image_attempts
          FROM cache_entries
         WHERE namespace = $1 AND cache_key = $2`,
       [namespace, key],
@@ -75,7 +81,32 @@ export class CacheRepository {
       contentType: row.content_type,
       byteLength: Number(row.byte_length),
       fetchedAt: row.fetched_at,
+      nextRefreshAt: row.next_refresh_at,
+      revision: row.revision,
+      imageLastResult: row.image_last_result,
+      imageAttempts: row.image_attempts,
     } satisfies CachedObjectEntry : null;
+  }
+
+  /** Network IO happens outside this transaction. Fence late publishers,
+   * including concurrent cold inserts, while sharing the existing GC lock. */
+  public async publishImage<T>(key: string, expectedRevision: string | null,
+    operation: (repository: CacheRepository) => Promise<T>): Promise<{ published: boolean; value?: T }> {
+    return this.withObjectMutation(async repository => {
+      await repository.db.query("SELECT pg_advisory_xact_lock(hashtextextended('hirmos:image:' || $1, 0))", [key]);
+      const current = await repository.get('image', key);
+      if ((current?.revision ?? null) !== expectedRevision) return { published: false };
+      return { published: true, value: await operation(repository) };
+    });
+  }
+
+  public async recordImageAttempt(key: string, result: 'image' | 'placeholder' | 'error',
+    attempts: number, delayMs: number): Promise<void> {
+    await this.db.query(`UPDATE cache_entries SET image_last_result = $2,
+        image_attempts = $3, image_checked_at = now(),
+        next_refresh_at = now() + ($4::double precision * interval '1 millisecond'),
+        revision = revision + 1
+      WHERE namespace = 'image' AND cache_key = $1`, [key, result, attempts, delayMs]);
   }
 
   public async put(input: {
@@ -106,6 +137,7 @@ export class CacheRepository {
          content_type = EXCLUDED.content_type,
          byte_length = EXCLUDED.byte_length,
          content_hash = EXCLUDED.content_hash,
+         revision = cache_entries.revision + 1,
          fetched_at = now(), validated_at = now(), last_accessed_at = now(),
          access_count = cache_entries.access_count + 1`,
       [input.namespace, input.key, input.sourceId ?? null, input.entityType ?? null,

@@ -3,7 +3,8 @@
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import argon2 from 'argon2';
 import { createDatabase } from '../apps/api/dist/db/database.js';
@@ -28,6 +29,9 @@ import { createSocketServer } from '../apps/api/dist/socket/socket-server.js';
 import { LyricsRepository } from '../apps/api/dist/lyrics/lyrics-repository.js';
 import { LrclibLyricsProvider } from '../apps/api/dist/lyrics/lrclib-lyrics-provider.js';
 import { ThirdPartyTelemetry } from '../apps/api/dist/integrations/third-party-request.js';
+import { CacheRepository } from '../apps/api/dist/cache/cache-repository.js';
+import { ObjectStore } from '../apps/api/dist/cache/object-store.js';
+import { ImageCacheService } from '../apps/api/dist/cache/image-cache-service.js';
 
 const url = new URL(process.env.HIRMOS_TEST_DATABASE_URL ?? '');
 if (!['127.0.0.1', 'localhost'].includes(url.hostname) || url.pathname !== '/hirmos_core_test') {
@@ -93,6 +97,18 @@ const lyricsProvider = new LrclibLyricsProvider(async input => {
 const album = { id: 'album', name: 'Prueba de continuidad', artist: 'Artista de prueba',
   artistId: 'artist', coverArt:'fixture-cover', songCount: songs.length, duration: 720, year: 2026 };
 const artist = { id: 'artist', name: 'Artista de prueba', albumCount: 1 };
+const imageLab = process.env.HIRMOS_FIXTURE_IMAGE_CACHE === '1';
+const imageLabCache = imageLab ? new ImageCacheService(new CacheRepository(database),
+  new ObjectStore(await mkdtemp(resolve(tmpdir(), 'hirmos-image-lab-'))), 2) : undefined;
+await imageLabCache?.initialize();
+let imageLabVersion = 0;
+const imageLabPictures = imageLab ? [
+  process.env.HIRMOS_FIXTURE_IMAGE_PREVIEW_FILE
+    ? { bytes: await readFile(process.env.HIRMOS_FIXTURE_IMAGE_PREVIEW_FILE), type: 'image/jpeg' }
+    : { bytes: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'), type: 'image/png' },
+  { bytes: await readFile(new URL('../apps/web/public/icons/hirmos-192.png', import.meta.url)), type: 'image/png' },
+] : [];
+if (imageLab) artist.coverArt = 'fixture-cover';
 const albums=[album];
 const artists=[artist];
 const localCovers=new Map();
@@ -158,6 +174,10 @@ const provider = createServer(async (req, res) => {
   requests.push({ operation, id, at: Date.now(), mode: fault.mode });
   if (requests.length > 100) requests.shift();
   if(operation==='getCoverArt'){
+    if(imageLab && id==='fixture-cover'){
+      const image=imageLabPictures[imageLabVersion];
+      res.writeHead(200,{'content-type':image.type,'content-length':image.bytes.length});return res.end(image.bytes);
+    }
     const local=localCovers.get(id);
     if(local){res.writeHead(200,{'content-type':local.type,'content-length':local.bytes.length});return res.end(local.bytes);}
     // One-pixel raster, entirely synthetic; no artwork or external provider.
@@ -208,7 +228,7 @@ const music = new MusicSourceService(new MusicSourceRepository(database),
   new SourceCredentialCipher(randomBytes(32).toString('base64url')), undefined,
   new ActivityRepository(database), lyricsLab ? new LyricsRepository(database) : undefined,
   lyricsLab ? [lyricsProvider] : [], new CatalogRepository(database), undefined,
-  new FavoriteRepository(database));
+  new FavoriteRepository(database), imageLabCache);
 await music.configure({ name: 'Fuente sintética', baseUrl: 'http://127.0.0.1:3314', username: 'fixture', password: 'fixture' });
 await music.syncCatalog();
 if (trackLayoutLab) {
@@ -226,6 +246,16 @@ const auth = new AuthService(new PostgresAuthRepository(database), undefined, re
 const accounts = new AccountService(new PostgresAccountRepository(database),
   new AesGcmOutboxCipher(randomBytes(32).toString('base64url')), config.PUBLIC_ORIGIN, undefined, revocations);
 const app = await buildApp({ config, authService: auth, accountService: accounts, musicSourceService: music, database, revocations });
+if (imageLab) {
+  app.post('/__fixture/image-cache', async (request, reply) => {
+    const version = request.body?.version;
+    if (![0,1].includes(version)) return reply.code(400).send({ error:'Invalid synthetic image version' });
+    imageLabVersion = version;
+    const source = await music.currentForAdmin();
+    await music.warmCover(source.id, 'fixture-cover', 320, true);
+    return { version };
+  });
+}
 if (lyricsLab) {
   lyricsTelemetry.attachLogger(app.log);
   app.get('/__fixture/lyrics-requests', async () => ({ requests: lyricsRequests }));

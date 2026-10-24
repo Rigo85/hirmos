@@ -25,6 +25,8 @@
     "test:repeat:pg": "node scripts/test-repeat.mjs",
     "test:unique:pg": "node scripts/test-unique-tracks.mjs",
     "test:cache:pg": "node scripts/test-cache-lifecycle.mjs",
+    "test:images:pg": "node scripts/test-image-refresh.mjs",
+    "images:refresh-artist": "node scripts/refresh-artist-image.mjs",
     "test:sessions:pg": "node scripts/test-sessions.mjs",
     "test:accounts:pg": "node scripts/test-account-management.mjs",
     "test:backup": "node --test tools/backup/*.test.mjs",

@@ -71,7 +71,9 @@ const cacheRepository = database && config.HIRMOS_CACHE_DIR
 const objectStore = database && config.HIRMOS_CACHE_DIR
   ? new ObjectStore(config.HIRMOS_CACHE_DIR) : undefined;
 const imageCache = cacheRepository && objectStore
-  ? new ImageCacheService(cacheRepository, objectStore, config.IMAGE_CACHE_CONCURRENCY)
+  ? new ImageCacheService(cacheRepository, objectStore, config.IMAGE_CACHE_CONCURRENCY, {
+    observe: imageCache => console.info(JSON.stringify({ imageCache })),
+  })
   : undefined;
 const lyricsObjectCache = cacheRepository && objectStore
   ? new LyricsObjectCache(cacheRepository, objectStore) : undefined;
