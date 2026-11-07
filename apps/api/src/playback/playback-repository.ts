@@ -21,6 +21,7 @@ const LEASE_SECONDS = 30;
 interface FailureState {
   omitted?: string[]; consecutive?: number; since?: number; healthySince?: number;
   notices?: PlaybackFailureNotice[];
+  activeNotice?: { id: string; playbackInstanceId: string | null; queueItemId: string | null; attempt: number } | null;
   permissionBudgetMs?: number;
 }
 
@@ -874,7 +875,13 @@ export class PlaybackRepository {
         attempt += 1; phase = 'loading'; state.healthySince = undefined;
       }
       const resumeClaim = name === 'claim' && before.renderPhase === 'awaiting_interaction';
-      if (name === 'claim') { attempt += 1; phase = resumeClaim || after.status === 'playing' ? 'loading' : 'paused'; }
+      if (name === 'claim') {
+        attempt += 1;
+        // Taking control is not a retry: preserve an unresolved terminal state
+        // and its actions until an explicit retry or another selection.
+        phase = ['error','blocked'].includes(before.renderPhase) ? before.renderPhase
+          : resumeClaim || after.status === 'playing' ? 'loading' : 'paused';
+      }
       if (name === 'control' && ['pause','detach'].includes(input.action ?? '') && !['error', 'blocked'].includes(before.renderPhase)) phase = 'paused';
       if (name === 'control' && input.action === 'pause' && before.renderPhase === 'awaiting_interaction') attempt += 1;
       if (name === 'update' && input.renderPhase === 'awaiting_interaction' && before.renderPhase !== 'awaiting_interaction') {
@@ -897,6 +904,36 @@ export class PlaybackRepository {
           state.healthySince ??= Date.now();
           if (Date.now() - state.healthySince >= 3_000) { state.consecutive = 0; state.since = undefined; }
         } else state.healthySince = undefined;
+      }
+      // A historical omission must never become active merely because a later
+      // song starts buffering. Bind the notice to the resulting execution, then
+      // retire it monotonically without deleting the incident or changing recovery.
+      const noticeContext = {
+        playbackInstanceId: result.snapshot.playbackInstanceId,
+        queueItemId: result.snapshot.currentQueueItemId, attempt,
+      };
+      if (name === 'failure') {
+        state.activeNotice = { id: input.commandId, ...noticeContext };
+      } else {
+        // Migrate legacy state lazily: retain a real current blockage, never an
+        // old auto-skip. Explicit null prevents future reconstruction from history.
+        if (state.activeNotice === undefined) {
+          state.activeNotice = before.activeFailureId ? { id: before.activeFailureId,
+            playbackInstanceId: before.playbackInstanceId, queueItemId: before.currentQueueItemId,
+            attempt: before.attempt } : null;
+        }
+        const progressed = name === 'update' && phase === 'playing' && after.positionMs > before.positionMs;
+        const manualControl = name === 'control' && ['play','next','previous','retry','seek','detach'].includes(input.action ?? '');
+        const pausedOmission = name === 'control' && input.action === 'pause'
+          && state.notices?.find(n => n.id === state.activeNotice?.id)?.outcome === 'advanced';
+        if (name === 'claim' && ['error','blocked'].includes(phase) && state.activeNotice) {
+          // Transferring control does not cure a still-blocked execution.
+          state.activeNotice = { id: state.activeNotice.id, ...noticeContext };
+        } else if (progressed || changedItem || name === 'claim' || manualControl || pausedOmission
+          || state.activeNotice && (state.activeNotice.playbackInstanceId !== noticeContext.playbackInstanceId
+            || state.activeNotice.queueItemId !== noticeContext.queueItemId || state.activeNotice.attempt !== attempt)) {
+          state.activeNotice = null;
+        }
       }
       await db.query(`UPDATE playback_sessions SET playback_attempt=$2,render_phase=$3,failure_state=$4::jsonb,
         status=CASE WHEN $5 THEN 'playing' ELSE status END
@@ -957,6 +994,7 @@ function mapSnapshot(row: SnapshotRow, queueRows: QueueRow[]): PlaybackSnapshot 
     attempt: row.playback_attempt ?? 0,
     renderPhase: row.render_phase ?? 'unknown',
     failures: (row.failure_state?.notices ?? []).filter(notice => notice.code !== 'autoplay'),
+    activeFailureId: activeFailureId(row),
     recoveryDeadline: row.failure_state?.since === undefined ? null
       : new Date(row.failure_state.since + 30_000).toISOString(),
     sessionId: row.id,
@@ -981,6 +1019,22 @@ function mapSnapshot(row: SnapshotRow, queueRows: QueueRow[]): PlaybackSnapshot 
     leaseExpiresAt: row.lease_expires_at?.toISOString() ?? null,
     queue,
   };
+}
+
+function activeFailureId(row: SnapshotRow): string | null {
+  const state = row.failure_state;
+  const marker = state?.activeNotice;
+  if (marker !== undefined) {
+    if (!marker || marker.playbackInstanceId !== row.playback_instance_id
+      || marker.queueItemId !== row.current_queue_item_id || marker.attempt !== (row.playback_attempt ?? 0)) return null;
+    return state.notices?.some(n => n.id === marker.id && n.code !== 'autoplay') ? marker.id : null;
+  }
+  // Older durable sessions have no marker. Only an unresolved terminal failure
+  // can be inferred safely; loading/buffering provides no evidence of a new skip.
+  const latest = state?.notices?.at(-1);
+  const ref = row.source_id && row.remote_track_id ? encodeTrackReference(row.source_id, row.remote_track_id) : null;
+  return latest && latest.code !== 'autoplay' && latest.outcome !== 'advanced'
+    && latest.trackRef === ref && ['error','blocked'].includes(row.render_phase) ? latest.id : null;
 }
 
 function canonicalJson(value: unknown): string {

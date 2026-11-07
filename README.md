@@ -551,6 +551,13 @@ cerrar por completo y recuerdan el cierre por cuenta/navegador; su historial
 queda accesible en la cola. No se garantiza autoplay sin interacción en todos
 los navegadores.
 
+Los avisos vigentes se distinguen del historial y se vinculan a una ejecución
+e intento concretos. Una omisión deja de ser aviso al confirmar avance real de
+la siguiente pista o cambiar explícitamente de reproducción; cargar, pausar,
+volver a esa canción o recargar no la reactiva. Los bloqueos aún pendientes
+conservan su explicación y acciones, también al transferir el control.
+Esto no modifica los tiempos de recuperación ni borra las incidencias.
+
 La resolución por lote conserva resultados parciales y causas por pista: una
 caída temporal no se presenta como contenido inexistente. La recuperación y
 precarga respetan la espera solicitada por el proveedor; una pausa concurrente

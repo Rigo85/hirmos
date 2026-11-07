@@ -8,7 +8,8 @@ describe('incident and permission presentation', () => {
   afterEach(() => TestBed.resetTestingModule());
   function setup(phase = 'error', code = 'decode') {
     const playback = {
-      snapshot: signal({ renderPhase: phase, currentTrackRef:'track', failures:[{ id:'one', code, trackRef:'track',
+      snapshot: signal({ renderPhase: phase, currentTrackRef:'track', activeFailureId:undefined as string|null|undefined,
+        failures:[{ id:'one', code, trackRef:'track', outcome:'paused',
         phase:'start', occurredAt:new Date().toISOString() }] }),
       unconfirmedFailure:signal<unknown>(null), authenticationRequired:signal(false), ownsLease:vi.fn(()=>true),
       dismissedFailure:signal<string|null>(null), failureDetailsOpen:signal(false), failureText:()=> 'Falló el audio.',
@@ -72,6 +73,47 @@ describe('incident and permission presentation', () => {
     expect(root.textContent?.trim()).toBe('');
     fixture.componentRef.setInput('history',true); fixture.detectChanges();
     expect(root.textContent?.trim()).toBe('');
+  });
+
+  it('never promotes a legacy omission into an alert when another song loads or buffers', () => {
+    const {playback,fixture,root}=setup('loading','timeout');
+    const s=playback.snapshot();
+    for (const phase of ['loading','playing','buffering','paused','loading']) {
+      playback.snapshot.set({...s,renderPhase:phase,currentTrackRef:'other',
+        failures:[{...s.failures[0],outcome:'advanced'}]}); fixture.detectChanges();
+      expect(root.querySelector('section')).toBeNull();
+    }
+    fixture.componentRef.setInput('history',true); playback.failureDetailsOpen.set(true); fixture.detectChanges();
+    expect(root.querySelectorAll('li')).toHaveLength(1);
+    expect(root.textContent).toContain('Registro anterior');
+  });
+
+  it('shows a fresh omission only while explicitly active, with no resurrection after recovery or reload', () => {
+    const {playback,fixture,root}=setup('loading','timeout');
+    const s=playback.snapshot();
+    playback.snapshot.set({...s,currentTrackRef:'successor',activeFailureId:'one',
+      failures:[{...s.failures[0],outcome:'advanced'}]}); fixture.detectChanges();
+    expect(root.querySelector('section')).not.toBeNull();
+    expect(root.textContent).not.toContain('Reintentar pista actual');
+    for(const phase of ['playing','buffering','paused','loading']) {
+      playback.snapshot.update(s=>({...s,renderPhase:phase,activeFailureId:null})); fixture.detectChanges();
+      expect(root.querySelector('section')).toBeNull();
+    }
+    fixture.destroy();
+    const restored=TestBed.createComponent(PlaybackFailuresComponent); restored.detectChanges();
+    expect(restored.nativeElement.querySelector('section')).toBeNull();
+    playback.snapshot.update(s=>({...s,activeFailureId:'two',failures:[...s.failures,{...s.failures[0],id:'two'}]}));
+    restored.detectChanges(); expect(restored.nativeElement.querySelector('section')).not.toBeNull();
+  });
+
+  it('explicitly resolved or missing IDs never fall back to the last incident, even on the same track', () => {
+    const {playback,fixture,root}=setup();
+    for(const id of [null,'not-in-history']) {
+      playback.snapshot.update(s=>({...s,activeFailureId:id})); fixture.detectChanges();
+      expect(root.querySelector('section')).toBeNull();
+    }
+    playback.snapshot.update(s=>({...s,activeFailureId:'one'})); fixture.detectChanges();
+    expect(root.textContent).toContain('Reintentar pista actual');
   });
 
   it('access renewal does not duplicate notices or hide an unrelated decode failure', () => {

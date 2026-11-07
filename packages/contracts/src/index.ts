@@ -439,6 +439,8 @@ export const playbackSnapshotSchema = z.object({
   attempt: z.number().int().nonnegative().default(0),
   renderPhase: playbackRenderPhaseSchema.default('unknown'),
   failures: z.array(playbackFailureNoticeSchema).default([]),
+  // Absent only on older servers. Null explicitly means history without an active notice.
+  activeFailureId: z.uuid().nullable().optional(),
   recoveryDeadline: z.iso.datetime().nullable().default(null),
   sessionId: z.uuid(),
   revision: z.number().int().nonnegative(),

@@ -201,7 +201,7 @@ try {
 
   await socketChecks(new PlaybackService(repo), user, other, foreign);
   check('real Socket.IO rejects old clients, authenticates ownership and fences remote completion');
-  await failureChecks(repo, db, projector, { user, desktop, phone, source });
+  await failureChecks(repo, db, projector, { user, other, desktop, phone, source });
   console.log(`PASS ${checks.length} PostgreSQL guarantees; isolated schema only`);
 } finally {
   await observer.query('ROLLBACK').catch(() => undefined);
@@ -213,7 +213,7 @@ try {
   await admin.end();
 }
 
-async function failureChecks(repo, db, projector, {user,desktop,phone,source}) {
+async function failureChecks(repo, db, projector, {user,other,desktop,phone,source}) {
   let s;
   const begin = async (ids) => {
     s = await repo.snapshot(user);
@@ -416,6 +416,63 @@ async function failureChecks(repo, db, projector, {user,desktop,phone,source}) {
   assert.equal(tooSoon.status,'conflict');
   assert.equal(tooSoon.error.code,'RETRY_LATER');
   check('the durable retry cooldown also applies to another client, not just its UI');
+
+  await begin(['notice-a','notice-b','notice-c']);
+  const omission=fault('timeout');
+  s=(await repo.failure(omission)).snapshot;
+  const noticeId=omission.commandId;
+  assert.equal(s.activeFailureId,noticeId);
+  assert.equal((await new PlaybackRepository(db).snapshot(user)).activeFailureId,noticeId);
+  const update = async (phase,positionMs) => {
+    const result=await repo.update({userId:user,deviceId:desktop,commandId:randomUUID(),expectedRevision:s.revision,
+      anchor:anchor(s),leaseEpoch:s.leaseEpoch,status:'playing',renderPhase:phase,positionMs});
+    assert.equal(result.status,'accepted');s=result.snapshot;
+  };
+  await update('buffering',0);assert.equal(s.activeFailureId,noticeId);
+  await update('playing',0);assert.equal(s.activeFailureId,noticeId,'phase alone is not audible progress');
+  await update('playing',250);assert.equal(s.activeFailureId,null);
+  await update('buffering',250);assert.equal(s.activeFailureId,null);
+  await control('pause');await control('play');assert.equal(s.activeFailureId,null);
+  assert.equal((await repo.failure(omission)).status,'duplicate');
+  assert.equal((await repo.snapshot(user)).activeFailureId,null,'duplicate delivery must not reopen notice');
+  await control('previous');assert.equal(s.activeFailureId,null,'returning to failed song is a new execution');
+  assert.ok(s.failures.some(n=>n.id===noticeId));
+  const nextFailure=fault('decode');s=(await repo.failure(nextFailure)).snapshot;
+  assert.equal(s.activeFailureId,nextFailure.commandId);
+  check('notice follows automatic successor, retires on actual progress and never revives on buffering/play/revisit/duplicate');
+
+  for(const action of ['pause','next','previous','seek','detach']) {
+    await begin(['notice-manual-a','notice-manual-b','notice-manual-c']);
+    s=(await repo.failure(fault())).snapshot;assert.ok(s.activeFailureId);
+    await control(action,action==='seek'?12000:action==='detach'?0:undefined);assert.equal(s.activeFailureId,null,action);
+  }
+  await begin(['notice-select-a','notice-select-b']);s=(await repo.failure(fault())).snapshot;
+  s=(await repo.select({userId:user,deviceId:desktop,commandId:randomUUID(),expectedRevision:s.revision,
+    sourceId:source,remoteTrackId:'notice-select-a'})).snapshot;
+  assert.equal(s.activeFailureId,null);
+  await begin(['notice-transfer-a','notice-transfer-b']);s=(await repo.failure(fault())).snapshot;
+  s=(await repo.claim({userId:user,deviceId:phone,commandId:randomUUID(),expectedRevision:s.revision})).snapshot;
+  assert.equal(s.activeFailureId,null);
+  assert.equal((await repo.snapshot(other)).activeFailureId,null);
+  check('manual intent and transfer retire omissions without erasing history or crossing accounts');
+
+  await begin(['notice-block-a','notice-block-b']);s=(await repo.failure(fault('service_unavailable'))).snapshot;
+  const blockedId=s.activeFailureId;assert.ok(blockedId);
+  s=(await repo.claim({userId:user,deviceId:phone,commandId:randomUUID(),expectedRevision:s.revision})).snapshot;
+  assert.equal(s.activeFailureId,blockedId,'taking control does not cure an unresolved block');
+  assert.equal((await new PlaybackRepository(db).snapshot(user)).activeFailureId,blockedId);
+  // Simulate pre-marker durable state; no schema migration or historical purge.
+  await db.query("UPDATE playback_sessions SET failure_state=failure_state-'activeNotice' WHERE user_id=$1",[user]);
+  s=await repo.snapshot(user);assert.equal(s.activeFailureId,blockedId);
+  await control('retry');assert.equal(s.activeFailureId,null);
+  s=(await repo.claim({userId:user,deviceId:desktop,commandId:randomUUID(),expectedRevision:s.revision})).snapshot;
+  await control('pause');await control('play');assert.equal(s.activeFailureId,null);
+  await begin(['notice-legacy-a','notice-legacy-b']);s=(await repo.failure(fault())).snapshot;
+  await db.query("UPDATE playback_sessions SET failure_state=failure_state-'activeNotice' WHERE user_id=$1",[user]);
+  s=await repo.snapshot(user);assert.equal(s.activeFailureId,null);
+  await control('pause');await control('play');assert.equal(s.activeFailureId,null);
+  check('legacy omissions stay history while unresolved blocks survive reload and transfer until retry');
+
   await begin(['local-a','local-b']);
   const original=s;
   const detach={userId:user,deviceId:desktop,commandId:randomUUID(),expectedRevision:s.revision,

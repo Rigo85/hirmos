@@ -74,11 +74,15 @@ export class PlaybackFailuresComponent {
   protected readonly notices = computed(() => (this.playback.snapshot()?.failures ?? []).filter(n => n.code !== 'autoplay'));
   protected readonly active = computed(() => {
     const snapshot = this.playback.snapshot();
-    const latest = this.notices().at(-1);
+    const latest = snapshot?.activeFailureId === undefined
+      ? this.notices().at(-1)
+      : this.notices().find(n => n.id === snapshot.activeFailureId);
     if (!snapshot || !latest) return null;
     if (latest.code === 'authentication' && this.playback.authenticationRequired()) return null;
-    if (['error', 'blocked'].includes(snapshot.renderPhase) && latest.trackRef === snapshot.currentTrackRef) return latest;
-    if (latest.outcome === 'advanced' && ['loading','buffering'].includes(snapshot.renderPhase)) return latest;
+    if (latest.outcome !== 'advanced' && ['error', 'blocked'].includes(snapshot.renderPhase)
+      && latest.trackRef === snapshot.currentTrackRef) return latest;
+    if (snapshot.activeFailureId === latest.id && latest.outcome === 'advanced'
+      && ['loading','buffering'].includes(snapshot.renderPhase)) return latest;
     return null;
   });
 }
