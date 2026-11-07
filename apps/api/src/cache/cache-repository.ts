@@ -10,7 +10,14 @@ export interface CachedObjectEntry {
   revision?: string;
   imageLastResult?: 'image' | 'placeholder' | 'error' | null;
   imageAttempts?: number;
+  previousImage?: ImageVersion | null;
+  previousImageExpiresAt?: Date | null;
+  rejectedImageHash?: string | null;
+  rejectedImageUntil?: Date | null;
 }
+
+export type ImageVersion = Pick<CachedObjectEntry,
+  'relativePath' | 'contentHash' | 'contentType' | 'byteLength'> & { fetchedAt?: string };
 
 export interface CacheEvictionCandidate extends CachedObjectEntry {
   namespace: 'image' | 'lyrics' | 'provider' | 'analysis';
@@ -39,14 +46,14 @@ export class CacheRepository {
   }
 
   public async referencedHashes(): Promise<Set<string>> {
-    const result = await this.db.query<{ object_hash: string }>('SELECT DISTINCT object_hash FROM cache_entries');
+    const result = await this.db.query<{ object_hash: string }>(`SELECT object_hash FROM cache_entries UNION SELECT previous_image->>'contentHash' FROM cache_entries WHERE previous_image IS NOT NULL AND previous_image_expires_at > now()`);
     return new Set(result.rows.map(row => row.object_hash));
   }
 
   /** Call under withMaintenance; rechecks current references before touching the file. */
   public async orphanEligible(hash: string, graceMs: number): Promise<boolean> {
     const present = await this.db.query<{ present: boolean }>(
-      'SELECT EXISTS (SELECT 1 FROM cache_entries WHERE object_hash = $1) AS present', [hash]);
+      `SELECT EXISTS (SELECT 1 FROM cache_entries WHERE object_hash = $1 OR (previous_image IS NOT NULL AND previous_image_expires_at > now() AND previous_image->>'contentHash' = $1)) AS present`, [hash]);
     if (present.rows[0]?.present) {
       await this.forgetOrphan(hash);
       return false;
@@ -67,9 +74,12 @@ export class CacheRepository {
       relative_path: string; content_hash: string; content_type: string; byte_length: string;
       fetched_at: Date; next_refresh_at: Date | null; revision: string;
       image_last_result: CachedObjectEntry['imageLastResult']; image_attempts: number;
+      previous_image: ImageVersion | null; previous_image_expires_at: Date | null;
+      rejected_image_hash: string | null; rejected_image_until: Date | null;
     }>(
       `SELECT relative_path, content_hash, content_type, byte_length, fetched_at,
-              next_refresh_at, revision::text, image_last_result, image_attempts
+              next_refresh_at, revision::text, image_last_result, image_attempts,
+              previous_image, previous_image_expires_at, rejected_image_hash, rejected_image_until
          FROM cache_entries
         WHERE namespace = $1 AND cache_key = $2`,
       [namespace, key],
@@ -85,6 +95,10 @@ export class CacheRepository {
       revision: row.revision,
       imageLastResult: row.image_last_result,
       imageAttempts: row.image_attempts,
+      previousImage: row.previous_image,
+      previousImageExpiresAt: row.previous_image_expires_at,
+      rejectedImageHash: row.rejected_image_hash,
+      rejectedImageUntil: row.rejected_image_until,
     } satisfies CachedObjectEntry : null;
   }
 
@@ -107,6 +121,30 @@ export class CacheRepository {
         next_refresh_at = now() + ($4::double precision * interval '1 millisecond'),
         revision = revision + 1
       WHERE namespace = 'image' AND cache_key = $1`, [key, result, attempts, delayMs]);
+  }
+
+  /** Called inside publishImage, with a verified, distinct previous image. */
+  public async retainPreviousImage(key: string, previous: CachedObjectEntry): Promise<void> {
+    const version: ImageVersion = { relativePath: previous.relativePath, contentHash: previous.contentHash,
+      contentType: previous.contentType, byteLength: previous.byteLength, fetchedAt: previous.fetchedAt?.toISOString() };
+    await this.db.query(`UPDATE cache_entries SET previous_image = $2::jsonb,
+      previous_image_expires_at = now() + interval '30 days'
+      WHERE namespace = 'image' AND cache_key = $1`, [key, JSON.stringify(version)]);
+    await this.forgetOrphan(previous.contentHash);
+  }
+
+  /** Caller validates the previous file outside the transaction, then fences
+   * this mutation with publishImage. Recovery does not turn old data into fresh. */
+  public async restorePreviousImage(key: string, previous: ImageVersion, rejectHash?: string): Promise<void> {
+    await this.db.query(`UPDATE cache_entries SET object_hash=$2, content_hash=$2,
+      relative_path=$3, content_type=$4, byte_length=$5, fetched_at=COALESCE($6::timestamptz, fetched_at),
+      previous_image=NULL, previous_image_expires_at=NULL, revision=revision+1,
+      image_last_result='image', image_attempts=0, next_refresh_at=now()+interval '30 seconds',
+      rejected_image_hash=COALESCE($7, rejected_image_hash),
+      rejected_image_until=CASE WHEN $7::text IS NOT NULL THEN now()+interval '30 days' ELSE rejected_image_until END
+      WHERE namespace='image' AND cache_key=$1`,
+      [key, previous.contentHash, previous.relativePath, previous.contentType, previous.byteLength, previous.fetchedAt ?? null, rejectHash ?? null]);
+    await this.forgetOrphan(previous.contentHash);
   }
 
   public async put(input: {
@@ -162,7 +200,11 @@ export class CacheRepository {
       `SELECT COALESCE(sum(byte_length), 0)::text AS bytes
          FROM (
            SELECT object_hash, max(byte_length) AS byte_length
-             FROM cache_entries GROUP BY object_hash
+             FROM (
+               SELECT object_hash, byte_length FROM cache_entries
+               UNION ALL SELECT previous_image->>'contentHash', (previous_image->>'byteLength')::bigint
+                 FROM cache_entries WHERE previous_image IS NOT NULL AND previous_image_expires_at > now()
+             ) referenced GROUP BY object_hash
          ) objects`,
     );
     return Number(result.rows[0]?.bytes ?? 0);
@@ -177,6 +219,7 @@ export class CacheRepository {
          FROM cache_entries entry
         WHERE namespace IN ('image', 'provider', 'analysis')
           AND (protected_until IS NULL OR protected_until < now())
+          AND (previous_image_expires_at IS NULL OR previous_image_expires_at <= now())
           AND (
             namespace <> 'image'
             OR CASE WHEN variant ~ '^[0-9]+$' THEN variant::integer ELSE 320 END > 128
@@ -217,6 +260,7 @@ export class CacheRepository {
     const removed = await this.db.query<{ object_hash: string }>(
       `DELETE FROM cache_entries entry WHERE namespace = $1 AND cache_key = $2 AND object_hash = $3
          AND namespace <> 'lyrics' AND (protected_until IS NULL OR protected_until < now())
+          AND (previous_image_expires_at IS NULL OR previous_image_expires_at <= now())
          AND (namespace <> 'image'
            OR CASE WHEN variant ~ '^[0-9]+$' THEN variant::integer ELSE 320 END > 128
            OR NOT EXISTS (
@@ -234,7 +278,7 @@ export class CacheRepository {
     const hash = removed.rows[0]?.object_hash;
     if (!hash) return false;
     const remaining = await this.db.query<{ present: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM cache_entries WHERE object_hash = $1) AS present`,
+      `SELECT EXISTS (SELECT 1 FROM cache_entries WHERE object_hash = $1 OR (previous_image IS NOT NULL AND previous_image_expires_at > now() AND previous_image->>'contentHash' = $1)) AS present`,
       [hash],
     );
     return !remaining.rows[0]?.present;

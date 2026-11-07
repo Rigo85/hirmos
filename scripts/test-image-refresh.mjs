@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
@@ -33,7 +34,8 @@ try {
   await store.initialize();
   const cache = new ImageCacheService(repository, store, 1, { random: () => 0 });
   const media = bytes => ({ status:200, contentType:'image/png', body:new Response(bytes).body });
-  let content = new Uint8Array([1,2,3]); let calls = 0;
+  const photo = async color => sharp({create:{width:2,height:2,channels:3,background:color}}).png().toBuffer();
+  let content = await photo('red'); let calls = 0;
   const input = { sourceId:source,remoteId:'cover',size:320,load:async()=>{calls++;return media(content);} };
   const key = imageKey(source, 'cover', 320);
   assert.equal(await queue.enqueueCatalogImages(), 1);
@@ -45,7 +47,7 @@ try {
   assert.equal(await queue.enqueueCatalogImages(), 0);
   pass('migration, cold warm and fresh-cache scheduling; enqueue never cancels a running lease');
 
-  content = new Uint8Array([4,5,6]); await cache.refresh(input);
+  content = await photo('blue'); await cache.refresh(input);
   assert.equal(calls,2);
   const fresh = await repository.get('image',key);
   assert.equal(fresh.contentHash,createHash('sha256').update(content).digest('hex'));
@@ -59,8 +61,7 @@ try {
   assert.equal(contenders.filter(result=>result.published).length,1);
   pass('real PG publication lock and revision fence reject stale and competing writers');
 
-  content = new Uint8Array([99,88]);
-  KNOWN_IMAGE_PLACEHOLDERS.add(createHash('sha256').update(content).digest('hex'));
+  content = await readFile(new URL('../apps/api/test/fixtures/images/navidrome-artist-placeholder.webp', import.meta.url));
   await cache.refresh(input);
   let row = await repository.get('image',key);
   assert.equal(row.contentHash,fresh.contentHash); assert.equal(row.imageLastResult,'placeholder');
@@ -77,12 +78,51 @@ try {
   });
   const late = cache.refresh(input); await started;
   const second = new ImageCacheService(new CacheRepository(db),store,1);
-  await second.refresh({...input,load:async()=>media(new Uint8Array([7,8,9]))});
+  await second.refresh({...input,load:async()=>media(await photo('green'))});
   const winner = await repository.get('image',key);
-  finish(media(new Uint8Array([3,2,1]))); await late;
+  finish(media(await photo('orange'))); await late;
   row = await repository.get('image',key); assert.equal(row.contentHash,winner.contentHash);
   assert.equal(row.revision,winner.revision);
   pass('late network result from a different service instance cannot overwrite the winner');
+  assert.ok(row.previousImage);
+  const priorHash = row.previousImage.contentHash;
+  const expiry = row.previousImageExpiresAt.valueOf();
+  await second.refresh({...input,load:async()=>media(await photo('green'))});
+  row = await repository.get('image',key);
+  assert.equal(row.previousImage.contentHash,priorHash);
+  assert.equal(row.previousImageExpiresAt.valueOf(),expiry);
+  assert.ok((await repository.referencedHashes()).has(priorHash));
+  pass('one durable prior version; unchanged content never rotates or extends it');
+
+  const restarted = new ImageCacheService(new CacheRepository(db),new ObjectStore(root));
+  assert.equal(await restarted.restorePrevious(input,'0'.repeat(64)),false);
+  assert.equal(await restarted.restorePrevious(input,row.contentHash),true);
+  await assert.rejects(()=>restarted.refresh({...input,load:async()=>media(await photo('green'))}),/temporarily rejected/);
+  row = await repository.get('image',key);
+  assert.equal(row.contentHash,priorHash);
+  assert.equal(row.previousImage,null);
+  pass('restart-safe guarded rollback and persisted rejection prevent immediate relapse');
+
+  await restarted.warm({...input,remoteId:'shared-photo',load:async()=>media(await photo('blue'))});
+  const shared=await repository.get('image',imageKey(source,'shared-photo',320));
+  assert.equal(shared.contentHash,row.contentHash);
+  assert.equal((await repository.get('image',key)).contentHash,row.contentHash);
+  pass('small legitimate photos may be shared by distinct cache keys');
+
+  // Reapply just the selective migration UPDATE as a repair: known placeholders
+  // are awakened once; unrelated entries and already classified absences survive.
+  const migration = await readFile(new URL('../database/migrations/0024_image_previous_version.sql',import.meta.url),'utf8');
+  const repair = migration.slice(migration.indexOf('UPDATE cache_entries'));
+  const poisoned = await store.put(content);
+  await repository.withObjectMutation(r=>r.put({namespace:'image',key:'poisoned',sourceId:source,
+    remoteEntityId:'poisoned',variant:'320',objectHash:poisoned.hash,relativePath:poisoned.relativePath,
+    contentType:'image/webp',byteLength:poisoned.byteLength}));
+  await db.query("UPDATE cache_entries SET image_last_result='image',next_refresh_at=now()+interval '30 days' WHERE cache_key='poisoned'");
+  assert.equal((await db.query(repair)).rowCount,1);
+  assert.equal((await db.query(repair)).rowCount,0);
+  assert.ok((await repository.get('image','poisoned')).nextRefreshAt.valueOf()<=Date.now());
+  assert.equal((await repository.get('image',key)).contentHash,priorHash);
+  pass('selective repair is idempotent and leaves recovered photos untouched');
   console.log(`${checks} PostgreSQL image refresh checks passed`);
 } finally {
   await db.close(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end();

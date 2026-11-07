@@ -15,6 +15,21 @@ test('updates the mounted cover after a selective refresh with a warm browser ca
   const initial = await cover.getAttribute('src');
   expect(initial).toMatch(/^blob:/);
   const beforeWidth = await cover.evaluate((image: HTMLImageElement) => image.naturalWidth);
+  const revalidate = async () => {
+    await page.clock.fastForward(31000);
+    const checked = page.waitForResponse(response => response.url().includes('/api/music/covers/')
+      && response.request().headers()['if-none-match'] !== undefined);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    expect((await checked).status()).toBe(304);
+  };
+  // Actual HTTP 200 static placeholder, then mislabelled HTML. Both must keep
+  // the warm browser's original photo; only a usable new image may replace it.
+  expect((await request.post('/__fixture/image-cache', { data: { version: 2 } })).ok()).toBe(true);
+  await revalidate();
+  await expect(cover).toHaveAttribute('src', initial!);
+  expect((await request.post('/__fixture/image-cache', { data: { version: 3 } })).status()).toBe(500);
+  await revalidate();
+  await expect(cover).toHaveAttribute('src', initial!);
   expect((await request.post('/__fixture/image-cache', { data: { version: 1 } })).ok()).toBe(true);
   await page.clock.fastForward(31000);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));

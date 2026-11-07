@@ -105,8 +105,10 @@ let imageLabVersion = 0;
 const imageLabPictures = imageLab ? [
   process.env.HIRMOS_FIXTURE_IMAGE_PREVIEW_FILE
     ? { bytes: await readFile(process.env.HIRMOS_FIXTURE_IMAGE_PREVIEW_FILE), type: 'image/jpeg' }
-    : { bytes: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'), type: 'image/png' },
+    : { bytes: await readFile(new URL('../apps/web/public/icons/hirmos-512.png', import.meta.url)), type: 'image/png' },
   { bytes: await readFile(new URL('../apps/web/public/icons/hirmos-192.png', import.meta.url)), type: 'image/png' },
+  { bytes: await readFile(new URL('../apps/api/test/fixtures/images/navidrome-artist-placeholder.webp', import.meta.url)), type: 'image/webp' },
+  { bytes: Buffer.from('<html>upstream error</html>'), type: 'image/png' },
 ] : [];
 if (imageLab) artist.coverArt = 'fixture-cover';
 const albums=[album];
@@ -249,7 +251,7 @@ const app = await buildApp({ config, authService: auth, accountService: accounts
 if (imageLab) {
   app.post('/__fixture/image-cache', async (request, reply) => {
     const version = request.body?.version;
-    if (![0,1].includes(version)) return reply.code(400).send({ error:'Invalid synthetic image version' });
+    if (![0,1,2,3].includes(version)) return reply.code(400).send({ error:'Invalid synthetic image version' });
     imageLabVersion = version;
     const source = await music.currentForAdmin();
     await music.warmCover(source.id, 'fixture-cover', 320, true);

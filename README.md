@@ -342,6 +342,37 @@ registran por separado. Los errores recuperables usan backoff y respetan
 `Retry-After`. La precarga y las consultas comparten trabajo; PostgreSQL rechaza
 publicaciones que intenten reemplazar una revisión más nueva.
 
+La protección ampliada requiere migración `0024` y las dependencias opcionales
+nativas de `sharp` correspondientes al servidor (`npm ci`, sin omitirlas).
+Antes de publicar se decodifica el primer fotograma completo: máximo 12 MiB de
+entrada, 16 millones de píxeles y 5 segundos de decodificación, dentro del
+presupuesto de carga. Se conservan los bytes originales; no hay conversión.
+Se reconocen por hash los placeholders estáticos de artista/álbum de Navidrome;
+la migración reclasifica solo los conocidos y adelanta su revisión pendiente.
+
+Al aceptar una imagen distinta se conserva **una versión anterior por clave**
+(fuente, referencia de portada y tamaño), durante 30 días desde el reemplazo.
+Revalidar bytes idénticos no rota ni prolonga ese respaldo. GC y cuota respetan
+la referencia y cuentan cada archivo físico una sola vez; después del vencimiento
+se aplica el período habitual de gracia de huérfanos. Una foto actual perdida,
+corrupta o reconocida como placeholder puede recuperar automáticamente el respaldo
+verificado. Esto no reconoce cualquier imagen errónea ni conserva continuidad si
+la fuente cambia el identificador de portada.
+
+Para recuperar explícitamente una versión previa, con API compilada,
+`DATABASE_URL` y `HIRMOS_CACHE_DIR` configurados:
+
+```bash
+npm run images:restore -- --source SOURCE_ID --cover COVER_ID --size 320 --preview /tmp/previous-image
+npm run images:restore -- --source SOURCE_ID --cover COVER_ID --size 320 --apply --expected-current-hash SHA256_ACTUAL_REVISADO
+```
+
+El primer comando no modifica la caché. El segundo solo actúa si la entrada sigue
+siendo la inspeccionada y el respaldo aún es válido; bloquea durante 30 días el
+hash descartado para evitar recuperarlo en el siguiente refresco. Opera sobre un
+solo tamaño, consume la versión anterior y no consulta ni modifica la fuente.
+Las imágenes guardadas antes de habilitar esta política pueden carecer de respaldo.
+
 Las respuestas de portada usan ETag y `private, no-cache`: se puede conservar
 el contenido, pero debe revalidarse. Las imágenes con carga diferida, incluidas
 las cabeceras de artista y álbum, revisan al volver a la pestaña si pasaron

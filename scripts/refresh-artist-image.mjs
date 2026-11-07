@@ -11,6 +11,7 @@ import { DefaultMusicSourceAdapterFactory } from '../apps/api/dist/music-source/
 import { CacheRepository } from '../apps/api/dist/cache/cache-repository.js';
 import { ImageCacheService } from '../apps/api/dist/cache/image-cache-service.js';
 import { KNOWN_IMAGE_PLACEHOLDERS } from '../apps/api/dist/cache/image-refresh-policy.js';
+import { validateImage } from '../apps/api/dist/cache/image-validator.js';
 import { ObjectStore } from '../apps/api/dist/cache/object-store.js';
 
 const { values } = parseArgs({ options: {
@@ -45,6 +46,7 @@ try {
   } finally { await reader.cancel().catch(() => undefined); }
   const bytes = Buffer.concat(chunks);
   assert.ok(bytes.length, 'Empty image');
+  await validateImage(bytes);
   const hash = createHash('sha256').update(bytes).digest('hex');
   assert.ok(!KNOWN_IMAGE_PLACEHOLDERS.has(hash), 'Source still returns a known placeholder');
   if (values.preview) await writeFile(values.preview, bytes, { flag: 'wx', mode: 0o600 });

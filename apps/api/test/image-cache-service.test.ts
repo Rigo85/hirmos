@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import sharp from 'sharp';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -10,6 +11,12 @@ import type { SourceMedia } from '../src/music-source/music-source-adapter.js';
 import { MusicSourceHttpError } from '../src/music-source/navidrome-adapter.js';
 import { KNOWN_IMAGE_PLACEHOLDERS } from '../src/cache/image-refresh-policy.js';
 
+const pixels = await Promise.all(Array.from({ length: 100 }, (_, i) => sharp({ create: {
+  width: 2, height: 2, channels: 3, background: { r: i, g: 90, b: 120 },
+} }).png().toBuffer().then(b => new Uint8Array(b))));
+const testImage = (values: number[]) => pixels[values[0] ?? 0]!;
+const placeholderBytes = new Uint8Array(await readFile(new URL('./fixtures/images/navidrome-artist-placeholder.webp', import.meta.url)));
+const albumPlaceholderBytes = new Uint8Array(await readFile(new URL('./fixtures/images/navidrome-album-placeholder.webp', import.meta.url)));
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
@@ -40,17 +47,17 @@ describe('ImageCacheService', () => {
     } as unknown as CacheRepository;
     const cache = new ImageCacheService(withLifecycle(repository), new ObjectStore(root), 2);
     await cache.initialize();
-    const load = vi.fn(async () => imageMedia(new Uint8Array([1, 2, 3])));
+    const load = vi.fn(async () => imageMedia(testImage([1, 2, 3])));
 
     const first = await Promise.all(Array.from({ length: 8 }, () => cache.get({
       sourceId: 'source-a', remoteId: 'cover-a', size: 320, load,
     })));
     expect(load).toHaveBeenCalledTimes(1);
-    for (const response of first) expect(await body(response)).toEqual(new Uint8Array([1, 2, 3]));
+    for (const response of first) expect(await body(response)).toEqual(testImage([1, 2, 3]));
 
     const cached = await cache.get({ sourceId: 'source-a', remoteId: 'cover-a', size: 320, load });
     expect(load).toHaveBeenCalledTimes(1);
-    expect(await body(cached)).toEqual(new Uint8Array([1, 2, 3]));
+    expect(await body(cached)).toEqual(testImage([1, 2, 3]));
   });
 
   it('does not cache a successful non-image response', async () => {
@@ -64,7 +71,7 @@ describe('ImageCacheService', () => {
 
     await expect(cache.get({
       sourceId: 'source-a', remoteId: 'cover-a', size: 320,
-      load: async () => ({ ...imageMedia(new Uint8Array([60, 120, 109, 108, 62])), contentType: 'text/xml' }),
+      load: async () => ({ ...imageMedia(testImage([60, 120, 109, 108, 62])), contentType: 'text/xml' }),
     })).rejects.toThrow('did not return an image');
     expect(repository.put).not.toHaveBeenCalled();
   });
@@ -100,13 +107,13 @@ describe('ImageCacheService', () => {
     })).rejects.toBeInstanceOf(ImageCachePendingError);
     expect(load).toHaveBeenCalledTimes(1);
 
-    complete(imageMedia(new Uint8Array([4, 5, 6])));
+    complete(imageMedia(testImage([4, 5, 6])));
     await vi.waitFor(() => expect(repository.put).toHaveBeenCalledTimes(1));
     const cached = await cache.get({
       sourceId: 'source-a', remoteId: 'slow-cover', size: 320, load,
     });
     expect(load).toHaveBeenCalledTimes(1);
-    expect(await body(cached)).toEqual(new Uint8Array([4, 5, 6]));
+    expect(await body(cached)).toEqual(testImage([4, 5, 6]));
   });
 
   it('queues distinct cold images without exceeding upstream concurrency', async () => {
@@ -139,9 +146,9 @@ describe('ImageCacheService', () => {
     expect(load).toHaveBeenCalledTimes(1);
     expect(maximumActive).toBe(1);
 
-    completions.shift()!(imageMedia(new Uint8Array([1])));
+    completions.shift()!(imageMedia(testImage([1])));
     await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2));
-    completions.shift()!(imageMedia(new Uint8Array([2])));
+    completions.shift()!(imageMedia(testImage([2])));
     await vi.waitFor(() => expect(repository.put).toHaveBeenCalledTimes(2));
     expect(maximumActive).toBe(1);
   });
@@ -164,7 +171,7 @@ describe('ImageCacheService', () => {
       maximumActive = Math.max(maximumActive, active);
       await new Promise((resolve) => setTimeout(resolve, 12));
       active -= 1;
-      return imageMedia(new Uint8Array([7, 8, 9]));
+      return imageMedia(testImage([7, 8, 9]));
     });
 
     const results = await Promise.allSettled(Array.from({ length: 20 }, (_value, index) => cache.get({
@@ -181,7 +188,7 @@ describe('ImageCacheService', () => {
     temporaryDirectories.push(root);
     const store = new ObjectStore(root);
     await store.initialize();
-    const previous = await store.put(new Uint8Array([1]));
+    const previous = await store.put(testImage([1]));
     let entry: CachedObjectEntry | null = {
       relativePath: previous.relativePath,
       contentHash: previous.hash,
@@ -202,7 +209,7 @@ describe('ImageCacheService', () => {
       touch: vi.fn(async () => undefined),
     } as unknown as CacheRepository;
     const cache = new ImageCacheService(withLifecycle(repository), store, 1);
-    const load = vi.fn(async () => imageMedia(new Uint8Array([8, 9])));
+    const load = vi.fn(async () => imageMedia(testImage([8, 9])));
 
     await cache.warm({ sourceId: 'source-a', remoteId: 'cover-a', size: 320, load });
 
@@ -211,7 +218,7 @@ describe('ImageCacheService', () => {
     const refreshed = await cache.get({
       sourceId: 'source-a', remoteId: 'cover-a', size: 320, load,
     });
-    expect(await body(refreshed)).toEqual(new Uint8Array([8, 9]));
+    expect(await body(refreshed)).toEqual(testImage([8, 9]));
     expect(load).toHaveBeenCalledTimes(1);
   });
 });
@@ -219,49 +226,47 @@ describe('ImageCacheService', () => {
 describe('image refresh safety', () => {
   it('shares warm and foreground refresh, retaining readable old bytes until completion', async () => {
     const { cache, repository, expire } = await statefulCache();
-    const input = { sourceId: 'source', remoteId: 'cover', size: 320, load: async () => imageMedia(new Uint8Array([1])) };
+    const input = { sourceId: 'source', remoteId: 'cover', size: 320, load: async () => imageMedia(testImage([1])) };
     await cache.warm(input); expire();
     let finish!: (media: SourceMedia) => void;
     const load = vi.fn(() => new Promise<SourceMedia>(resolve => { finish = resolve; }));
     const warming = cache.warm({ ...input, load });
     await vi.waitFor(() => expect(load).toHaveBeenCalledOnce());
     const old = await cache.get({ ...input, load });
-    expect(await body(old)).toEqual(new Uint8Array([1]));
+    expect(await body(old)).toEqual(testImage([1]));
     expect(old.imageRefreshPending).toBe(true);
-    finish(imageMedia(new Uint8Array([2]))); await warming;
+    finish(imageMedia(testImage([2]))); await warming;
     expect(load).toHaveBeenCalledOnce();
     expect(repository.recordImageAttempt).toHaveBeenLastCalledWith(expect.any(String), 'image', 0, 30 * 86400000);
   });
 
   it('forces a fresh cached image and coalesces repeated force requests after an older fetch', async () => {
     const { cache, expire } = await statefulCache();
-    const input = { sourceId: 'source', remoteId: 'cover', size: 320, load: async () => imageMedia(new Uint8Array([1])) };
+    const input = { sourceId: 'source', remoteId: 'cover', size: 320, load: async () => imageMedia(testImage([1])) };
     await cache.warm(input); expire();
     let finish!: (media: SourceMedia) => void;
     const older = cache.warm({ ...input, load: () => new Promise(resolve => { finish = resolve; }) });
     await vi.waitFor(() => expect(finish).toBeDefined());
-    const load = vi.fn(async () => imageMedia(new Uint8Array([3])));
+    const load = vi.fn(async () => imageMedia(testImage([3])));
     const forced = cache.refresh({ ...input, load });
     const joined = cache.refresh({ ...input, load });
-    finish(imageMedia(new Uint8Array([2])));
+    finish(imageMedia(testImage([2])));
     await Promise.all([older, forced, joined]);
     expect(load).toHaveBeenCalledOnce();
-    expect(await body(await cache.get(input))).toEqual(new Uint8Array([3]));
+    expect(await body(await cache.get(input))).toEqual(testImage([3]));
     await cache.refresh({ ...input, load });
     expect(load).toHaveBeenCalledTimes(2); // Explicit refresh bypasses the 30-day freshness.
   });
 
   it('does not replace a usable image with a known placeholder and spaces further checks', async () => {
-    const placeholder = new Uint8Array([99, 88, 77]);
-    const hash = createHash('sha256').update(placeholder).digest('hex');
-    vi.spyOn(KNOWN_IMAGE_PLACEHOLDERS, 'has').mockImplementation(value => value === hash);
+    const placeholder = placeholderBytes;
     const { cache, entry } = await statefulCache();
-    const input = { sourceId: 'source', remoteId: 'cover', size: 320, load: async () => imageMedia(new Uint8Array([1])) };
+    const input = { sourceId: 'source', remoteId: 'cover', size: 320, load: async () => imageMedia(testImage([1])) };
     await cache.warm(input);
     const originalFetchedAt = entry()!.fetchedAt;
     const load = vi.fn(async () => imageMedia(placeholder));
     await cache.refresh({ ...input, load });
-    expect(await body(await cache.get({ ...input, load }))).toEqual(new Uint8Array([1]));
+    expect(await body(await cache.get({ ...input, load }))).toEqual(testImage([1]));
     expect(entry()!.fetchedAt).toEqual(originalFetchedAt);
     expect(entry()!.imageLastResult).toBe('placeholder');
     expect(entry()!.nextRefreshAt!.valueOf() - Date.now()).toBeGreaterThan(86399000);
@@ -273,22 +278,21 @@ describe('image refresh safety', () => {
   });
 
   it('stores a cold placeholder with a short deadline, then promotes it to a photo', async () => {
-    const placeholder = new Uint8Array([99]);
-    vi.spyOn(KNOWN_IMAGE_PLACEHOLDERS, 'has').mockImplementation(value => value === createHash('sha256').update(placeholder).digest('hex'));
+    const placeholder = placeholderBytes;
     const { cache, entry, expire } = await statefulCache();
     const input = { sourceId: 'source', remoteId: 'cover', size: 320, load: async () => imageMedia(placeholder) };
     await cache.warm(input);
     expect(entry()!.imageLastResult).toBe('placeholder');
     expire();
-    await cache.warm({ ...input, load: async () => imageMedia(new Uint8Array([2])) });
+    await cache.warm({ ...input, load: async () => imageMedia(testImage([2])) });
     expect(entry()!.imageLastResult).toBe('image');
     expect(entry()!.imageAttempts).toBe(0);
-    expect(await body(await cache.get(input))).toEqual(new Uint8Array([2]));
+    expect(await body(await cache.get(input))).toEqual(testImage([2]));
   });
 
   it('retains a photo on 429 and persists Retry-After without changing the successful fetch date', async () => {
     const { cache, entry } = await statefulCache();
-    const input = { sourceId: 'source', remoteId: 'cover', size: 320, load: async () => imageMedia(new Uint8Array([1])) };
+    const input = { sourceId: 'source', remoteId: 'cover', size: 320, load: async () => imageMedia(testImage([1])) };
     await cache.warm(input);
     const date = entry()!.fetchedAt;
     const error = new MusicSourceHttpError(429, 120000);
@@ -296,13 +300,13 @@ describe('image refresh safety', () => {
     expect(entry()!.fetchedAt).toEqual(date);
     expect(entry()!.imageLastResult).toBe('error');
     expect(entry()!.nextRefreshAt!.valueOf() - Date.now()).toBeGreaterThan(119000);
-    expect(await body(await cache.get(input))).toEqual(new Uint8Array([1]));
+    expect(await body(await cache.get(input))).toEqual(testImage([1]));
   });
 
   it('bounds a stalled response body and cancels it without storing partial bytes', async () => {
     const { cache, entry } = await statefulCache({ fillTimeoutMs: 20 });
     const cancel = vi.fn();
-    const load = async () => ({ ...imageMedia(new Uint8Array([1])), body: new ReadableStream<Uint8Array>({ cancel }) });
+    const load = async () => ({ ...imageMedia(testImage([1])), body: new ReadableStream<Uint8Array>({ cancel }) });
     await expect(cache.warm({ sourceId: 'source', remoteId: 'cover', size: 320, load })).rejects.toMatchObject({ name: 'TimeoutError' });
     expect(cancel).toHaveBeenCalledOnce();
     expect(entry()).toBeNull();
@@ -311,16 +315,141 @@ describe('image refresh safety', () => {
   it('rejects a late publication from another cache instance', async () => {
     const { cache, repository, store, entry } = await statefulCache();
     const other = new ImageCacheService(repository, store, 1, { random: () => 0 });
-    const input = { sourceId: 'source', remoteId: 'cover', size: 320, load: async () => imageMedia(new Uint8Array([1])) };
+    const input = { sourceId: 'source', remoteId: 'cover', size: 320, load: async () => imageMedia(testImage([1])) };
     await cache.warm(input);
     let finish!: (media: SourceMedia) => void;
     const late = cache.refresh({ ...input, load: () => new Promise(resolve => { finish = resolve; }) });
     await vi.waitFor(() => expect(finish).toBeDefined());
-    await other.refresh({ ...input, load: async () => imageMedia(new Uint8Array([3])) });
+    await other.refresh({ ...input, load: async () => imageMedia(testImage([3])) });
     const revision = entry()!.revision;
-    finish(imageMedia(new Uint8Array([2]))); await late;
+    finish(imageMedia(testImage([2]))); await late;
     expect(entry()!.revision).toBe(revision);
-    expect(await body(await cache.get(input))).toEqual(new Uint8Array([3]));
+    expect(await body(await cache.get(input))).toEqual(testImage([3]));
+  });
+});
+
+describe('recoverable image versions', () => {
+  const input = { sourceId: 'source', remoteId: 'cover', size: 320, load: async () => imageMedia(testImage([1])) };
+
+  it('respects error backoff when a classified placeholder has no prior photo', async () => {
+    const { cache, entry } = await statefulCache();
+    await cache.warm({ ...input, load: async () => imageMedia(placeholderBytes) });
+    await expect(cache.refresh({ ...input, load: async () => { throw new MusicSourceHttpError(429, 120000); } })).rejects.toThrow();
+    const load = vi.fn(input.load);
+    await cache.warm({ ...input, load });
+    expect(load).not.toHaveBeenCalled();
+    expect(entry()!.imageLastResult).toBe('error');
+  });
+
+  it.each([128, 320, 640])('retains photos for both real static placeholders at size %i', async size => {
+    const { cache, entry } = await statefulCache();
+    const request = { ...input, size };
+    await cache.warm(request);
+    for (const placeholder of [placeholderBytes, albumPlaceholderBytes]) {
+      expect(KNOWN_IMAGE_PLACEHOLDERS.has(createHash('sha256').update(placeholder).digest('hex'))).toBe(true);
+      await cache.refresh({ ...request, load: async () => imageMedia(placeholder) });
+      expect(await body(await cache.get(request))).toEqual(testImage([1]));
+      expect(entry()!.previousImage).toBeUndefined();
+    }
+  });
+
+  it('keeps just one previous version, without rotating or prolonging it on identical bytes', async () => {
+    const { cache, entry } = await statefulCache();
+    await cache.warm(input);
+    const first = entry()!.contentHash;
+    const second = { ...input, load: async () => imageMedia(testImage([2])) };
+    await cache.refresh(second);
+    expect(entry()!.previousImage!.contentHash).toBe(first);
+    const expiry = entry()!.previousImageExpiresAt;
+    await cache.refresh(second);
+    expect(entry()!.previousImageExpiresAt).toEqual(expiry);
+    const secondHash = entry()!.contentHash;
+    await cache.refresh({ ...input, load: async () => imageMedia(testImage([3])) });
+    expect(entry()!.previousImage!.contentHash).toBe(secondHash);
+  });
+
+  it('recovers a missing current object after recreating the service', async () => {
+    const { cache, repository, store, entry } = await statefulCache();
+    await cache.warm(input);
+    await cache.refresh({ ...input, load: async () => imageMedia(testImage([2])) });
+    await store.remove(entry()!.relativePath);
+    const restarted = new ImageCacheService(repository, store);
+    expect(await body(await restarted.get(input))).toEqual(testImage([1]));
+    expect(entry()!.previousImage).toBeNull();
+    // A missing file does not blacklist its otherwise valid hash.
+    expect(entry()!.rejectedImageHash).toBeUndefined();
+  });
+
+  it('automatically recovers a current image reclassified as a known placeholder', async () => {
+    const { cache, store, entry, repository } = await statefulCache();
+    await cache.warm(input);
+    await cache.refresh({ ...input, load: async () => imageMedia(testImage([2])) });
+    const poisoned = await store.put(placeholderBytes);
+    Object.assign(entry()!, { relativePath: poisoned.relativePath, contentHash: poisoned.hash,
+      contentType: 'image/webp', byteLength: poisoned.byteLength, imageLastResult: 'image' });
+    const restarted = new ImageCacheService(repository, store);
+    expect(await body(await restarted.get(input))).toEqual(testImage([1]));
+    expect(entry()!.rejectedImageHash).toBe(poisoned.hash);
+  });
+
+  it('accepts small identical legitimate photos on different keys', async () => {
+    const { cache, repository, store } = await statefulCache();
+    await cache.warm(input);
+    expect(KNOWN_IMAGE_PLACEHOLDERS.has(createHash('sha256').update(testImage([1])).digest('hex'))).toBe(false);
+    await new ImageCacheService(repository, store).refresh({ ...input, remoteId: 'other' });
+    expect(await body(await cache.get(input))).toEqual(testImage([1]));
+  });
+
+  it('rejects an excessive pixel count without replacing the current image', async () => {
+    const { cache } = await statefulCache();
+    await cache.warm(input);
+    const large = await sharp({ create: { width: 4097, height: 4096, channels: 3, background: 'red' } }).png().toBuffer();
+    await expect(cache.refresh({ ...input, load: async () => imageMedia(large) })).rejects.toThrow('decoded');
+    expect(await body(await cache.get(input))).toEqual(testImage([1]));
+  });
+
+  it('only rolls back the inspected hash and blocks immediate reacceptance', async () => {
+    const { cache, entry } = await statefulCache();
+    await cache.warm(input);
+    const second = { ...input, load: async () => imageMedia(testImage([2])) };
+    await cache.refresh(second);
+    const hash = entry()!.contentHash;
+    expect(await cache.restorePrevious(input, 'outdated')).toBe(false);
+    expect(await cache.restorePrevious(input, hash)).toBe(true);
+    await expect(cache.refresh(second)).rejects.toThrow('temporarily rejected');
+    expect(await body(await cache.get(input))).toEqual(testImage([1]));
+  });
+
+  it('does not restore expired, missing or newly recognized placeholder previous files', async () => {
+    const { cache, store, entry } = await statefulCache();
+    await cache.warm(input);
+    await cache.refresh({ ...input, load: async () => imageMedia(testImage([2])) });
+    entry()!.previousImageExpiresAt = new Date(0);
+    expect(await cache.restorePrevious(input, entry()!.contentHash)).toBe(false);
+    entry()!.previousImageExpiresAt = new Date(Date.now() + 10000);
+    await store.remove(entry()!.previousImage!.relativePath);
+    expect(await cache.restorePrevious(input, entry()!.contentHash)).toBe(false);
+    entry()!.previousImage!.contentHash = createHash('sha256').update(placeholderBytes).digest('hex');
+    expect(await cache.restorePrevious(input, entry()!.contentHash)).toBe(false);
+  });
+
+  it.each(['<html>Bad gateway</html>', '<?xml version="1.0"?><error/>'])('rejects non-image bytes with image MIME: %s', async text => {
+    const { cache, entry } = await statefulCache();
+    await cache.warm(input);
+    const before = entry()!;
+    await expect(cache.refresh({ ...input, load: async () => imageMedia(new TextEncoder().encode(text)) })).rejects.toThrow();
+    expect(entry()!.contentHash).toBe(before.contentHash);
+    expect(entry()!.fetchedAt).toEqual(before.fetchedAt);
+    expect(entry()!.previousImage).toBeUndefined();
+  });
+
+  it('rejects a truncated image even when the header is recognizable', async () => {
+    const { cache, entry } = await statefulCache();
+    await cache.warm(input);
+    const jpeg = await sharp({ create: { width: 100, height: 100, channels: 3, background: 'red' } }).jpeg().toBuffer();
+    await expect(cache.refresh({ ...input, load: async () => imageMedia(jpeg.subarray(0, jpeg.length - 40)) })).rejects.toThrow();
+    expect(await body(await cache.get(input))).toEqual(testImage([1]));
+    expect(entry()!.imageLastResult).toBe('error');
   });
 });
 
@@ -333,7 +462,7 @@ async function statefulCache(options = {}) {
   const repository = {
     get: vi.fn(async () => entry ? { ...entry } : null),
     put: vi.fn(async (input: { relativePath: string; objectHash: string; contentType: string; byteLength: number }) => {
-      entry = { relativePath: input.relativePath, contentHash: input.objectHash, contentType: input.contentType,
+      entry = { ...entry, relativePath: input.relativePath, contentHash: input.objectHash, contentType: input.contentType,
         byteLength: input.byteLength, fetchedAt: new Date(), revision: String(Number(entry?.revision ?? 0) + 1) };
     }),
     touch: vi.fn(async () => undefined),
@@ -342,6 +471,16 @@ async function statefulCache(options = {}) {
         nextRefreshAt: new Date(Date.now() + delay), revision: String(Number(entry.revision) + 1) };
     }),
   } as unknown as CacheRepository;
+  repository.retainPreviousImage = async (_key, previous) => {
+    if (entry) entry = { ...entry, previousImage: { ...previous, fetchedAt: previous.fetchedAt?.toISOString() },
+      previousImageExpiresAt: new Date(Date.now() + 30 * 86400000) };
+  };
+  repository.restorePreviousImage = async (_key, prior, reject) => {
+    if (entry) entry = { ...entry, ...prior, fetchedAt: prior.fetchedAt ? new Date(prior.fetchedAt) : entry.fetchedAt,
+      previousImage: null, previousImageExpiresAt: null, revision: String(Number(entry.revision) + 1),
+      nextRefreshAt: new Date(Date.now() + 30000), rejectedImageHash: reject ?? entry.rejectedImageHash,
+      rejectedImageUntil: reject ? new Date(Date.now() + 30 * 86400000) : entry.rejectedImageUntil };
+  };
   repository.publishImage = async (_key, expected, operation) => {
     if ((entry?.revision ?? null) !== expected) return { published: false };
     return { published: true, value: await operation(repository) };
@@ -352,6 +491,7 @@ async function statefulCache(options = {}) {
 }
 
 function withLifecycle(repository: CacheRepository): CacheRepository {
+  repository.retainPreviousImage = vi.fn(async () => undefined);
   repository.withObjectMutation = async operation => operation(repository);
   repository.publishImage = async (_key, _revision, operation) => ({ published: true, value: await operation(repository) });
   repository.recordImageAttempt = vi.fn(async () => undefined);
@@ -362,7 +502,7 @@ function imageMedia(bytes: Uint8Array): SourceMedia {
   return {
     status: 200,
     body: new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } }),
-    contentType: 'image/webp', contentLength: String(bytes.byteLength),
+    contentType: 'image/png', contentLength: String(bytes.byteLength),
     contentRange: null, acceptRanges: null,
   };
 }

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { SourceMedia } from '../music-source/music-source-adapter.js';
 import { MusicSourceHttpError } from '../music-source/navidrome-adapter.js';
 import { CacheRepository, type CachedObjectEntry } from './cache-repository.js';
+import { InvalidCachedImageError, validateImage } from './image-validator.js';
 import { ObjectStore } from './object-store.js';
 import { IMAGE_REVALIDATE_MS, KNOWN_IMAGE_PLACEHOLDERS, imageErrorDelay, placeholderDelay } from './image-refresh-policy.js';
 
@@ -40,6 +41,7 @@ export class ImageCacheService {
   private readonly forced = new Map<string, Promise<CachedImage>>();
   private readonly lastTouch = new Map<string, number>();
   private readonly waiting: Array<() => void> = [];
+  private readonly validated = new Map<string, string>();
   private active = 0;
   private cooldownUntil = 0;
 
@@ -98,22 +100,72 @@ export class ImageCacheService {
   }
 
   private isDue(cached: CachedObjectEntry): boolean {
+    if (KNOWN_IMAGE_PLACEHOLDERS.has(cached.contentHash)
+      && (cached.imageLastResult == null || cached.imageLastResult === 'image')) return true;
     if (cached.nextRefreshAt) return cached.nextRefreshAt.valueOf() <= Date.now();
     if (KNOWN_IMAGE_PLACEHOLDERS.has(cached.contentHash)) return true;
     return !!cached.fetchedAt && cached.fetchedAt.valueOf() < Date.now() - IMAGE_REVALIDATE_MS;
   }
 
+  private async validate(bytes: Uint8Array, hash: string): Promise<string> {
+    const known = this.validated.get(hash);
+    if (known) return known;
+    const type = await validateImage(bytes);
+    if (this.validated.size >= 256) this.validated.delete(this.validated.keys().next().value!);
+    this.validated.set(hash, type);
+    return type;
+  }
+
+  /** Explicit rollback is guarded by the inspected current hash. A rejected
+   * candidate cannot be reaccepted by the next ordinary/forced refresh. */
+  public async restorePrevious(input: Pick<ImageRequest, 'sourceId' | 'remoteId' | 'size'>,
+    expectedHash: string): Promise<boolean> {
+    const key = imageKey(input.sourceId, input.remoteId, input.size);
+    const entry = await this.repository.get('image', key);
+    if (!entry || entry.contentHash !== expectedHash) return false;
+    return this.restore(key, entry, true);
+  }
+
+  private async restore(key: string, entry: CachedObjectEntry, rejectCurrent: boolean): Promise<boolean> {
+    const started = Date.now();
+    const prior = entry.previousImage;
+    if (!prior || !entry.previousImageExpiresAt || entry.previousImageExpiresAt.valueOf() <= Date.now()
+      || KNOWN_IMAGE_PLACEHOLDERS.has(prior.contentHash)) return false;
+    try {
+      const bytes = await this.store.read(prior.relativePath, prior.contentHash);
+      await this.validate(bytes, prior.contentHash);
+    } catch { return false; }
+    const result = await this.repository.publishImage(key, entry.revision ?? null, async repository => {
+      // The expiry can pass while waiting for the publication lock.
+      if (entry.previousImageExpiresAt!.valueOf() <= Date.now()) return false;
+      await repository.restorePreviousImage(key, prior, rejectCurrent ? entry.contentHash : undefined);
+      return true;
+    });
+    if (result.value === true) this.options.observe?.({ outcome: 'restored',
+      elapsedMs: Date.now() - started, size: 0, retained: true });
+    return result.value === true;
+  }
+
   private async readCached(key: string): Promise<{ entry: CachedObjectEntry; image: CachedImage } | null> {
-    const cached = await this.repository.get('image', key);
-    if (cached) {
+    // At most one recovery attempt. A competing writer wins through revision CAS.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const cached = await this.repository.get('image', key);
+      if (!cached) return null;
+      if (attempt === 0 && KNOWN_IMAGE_PLACEHOLDERS.has(cached.contentHash) && cached.previousImage) {
+        await this.restore(key, cached, true);
+        continue;
+      }
       try {
         const bytes = await this.store.read(cached.relativePath, cached.contentHash);
+        const contentType = await this.validate(bytes, cached.contentHash);
         if ((this.lastTouch.get(key) ?? 0) < Date.now() - 60 * 60 * 1_000) {
           this.lastTouch.set(key, Date.now());
           void this.repository.touch('image', key).catch(() => undefined);
         }
-        return { entry: cached, image: { bytes, contentType: cached.contentType, hash: cached.contentHash } };
-      } catch { /* A missing/corrupt object is safely reconstructed below. */ }
+        return { entry: cached, image: { bytes, contentType, hash: cached.contentHash } };
+      } catch {
+        if (attempt === 0) await this.restore(key, cached, false);
+      }
     }
     return null;
   }
@@ -138,19 +190,27 @@ export class ImageCacheService {
     this.checkCooldown();
     await this.acquire(signal);
     let previous: CachedObjectEntry | null = null;
+    let readable: Awaited<ReturnType<ImageCacheService['readCached']>> = null;
     try {
       this.checkCooldown();
       previous = await this.repository.get('image', key);
-      const upstream = await abortable(input.load(signal), signal);
-      const contentType = upstream.contentType?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
-      if (!contentType.startsWith('image/')) throw new Error('Music source did not return an image');
-      const bytes = await readBounded(upstream.body, MAX_IMAGE_BYTES, signal);
-      if (!bytes.length) throw new Error('Music source returned an empty image');
-      const hash = createHash('sha256').update(bytes).digest('hex');
-      const placeholder = KNOWN_IMAGE_PLACEHOLDERS.has(hash);
-      const attempts = placeholder ? (previous?.imageLastResult === 'placeholder' ? previous.imageAttempts ?? 0 : 0) + 1 : 0;
-      const retained = placeholder && previous && !KNOWN_IMAGE_PLACEHOLDERS.has(previous.contentHash)
+      readable = previous && !KNOWN_IMAGE_PLACEHOLDERS.has(previous.contentHash)
         ? await this.readCached(key) : null;
+      const upstream = await abortable(input.load(signal), signal);
+      const declaredType = upstream.contentType?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+      if (!declaredType.startsWith('image/')) throw new InvalidCachedImageError('Music source did not return an image');
+      const bytes = await readBounded(upstream.body, MAX_IMAGE_BYTES, signal);
+      if (!bytes.length) throw new InvalidCachedImageError('Music source returned an empty image');
+      const hash = createHash('sha256').update(bytes).digest('hex');
+      const contentType = await abortable(this.validate(bytes, hash), signal);
+      const placeholder = KNOWN_IMAGE_PLACEHOLDERS.has(hash);
+      const rejected = previous?.rejectedImageHash === hash && !!previous.rejectedImageUntil
+        && previous.rejectedImageUntil.valueOf() > Date.now();
+      if (rejected) throw new Error('Image candidate is temporarily rejected after rollback');
+      const attempts = placeholder ? (previous?.imageLastResult === 'placeholder' ? previous.imageAttempts ?? 0 : 0) + 1 : 0;
+      // Recovery may have changed the revision while this request was loading.
+      // Let CAS reject this response rather than rotating against stale metadata.
+      const retained = placeholder ? readable : null;
       const published = await this.repository.publishImage(key, previous?.revision ?? null, async (repository) => {
         if (retained) {
           await repository.recordImageAttempt(key, 'placeholder', attempts, placeholderDelay(attempts, this.random()));
@@ -162,11 +222,13 @@ export class ImageCacheService {
           variant: String(input.size), objectHash: object.hash, relativePath: object.relativePath,
           contentType, byteLength: object.byteLength,
         });
+        if (previous && readable && readable.entry.revision === previous.revision
+          && previous.contentHash !== hash) await repository.retainPreviousImage(key, readable.entry);
         await repository.recordImageAttempt(key, placeholder ? 'placeholder' : 'image', attempts,
           placeholder ? placeholderDelay(attempts, this.random()) : IMAGE_REVALIDATE_MS);
         return { bytes, contentType, hash: object.hash };
       });
-      this.options.observe?.({ outcome: published.published ? (placeholder ? 'placeholder' : 'image') : 'superseded',
+      this.options.observe?.({ outcome: published.published ? (retained ? 'retained' : placeholder ? 'placeholder_without_photo' : previous?.contentHash === hash ? 'unchanged' : 'published') : 'superseded',
         elapsedMs: Date.now() - started, size: input.size, retained: !!retained });
       if (published.value) return published.value;
       const winner = await this.readCached(key);
@@ -187,8 +249,10 @@ export class ImageCacheService {
           error instanceof MusicSourceHttpError ? error.retryAfterMs ?? 0 : 0);
         if (previous) await this.repository.publishImage(key, previous.revision ?? null,
           repository => repository.recordImageAttempt(key, 'error', attempts, delay));
-        this.options.observe?.({ outcome: 'error', elapsedMs: Date.now() - started, size: input.size,
-          retained: !!previous, code: error instanceof MusicSourceHttpError ? `HTTP_${error.status}` : 'IMAGE_FETCH_FAILED' });
+        this.options.observe?.({ outcome: error instanceof InvalidCachedImageError ? 'invalid_response' : 'deferred',
+          elapsedMs: Date.now() - started, size: input.size, retained: !!readable,
+          code: error instanceof MusicSourceHttpError ? `HTTP_${error.status}`
+            : error instanceof InvalidCachedImageError ? 'INVALID_IMAGE' : 'IMAGE_FETCH_FAILED' });
       }
       throw error;
     } finally {
@@ -278,7 +342,7 @@ async function readBounded(stream: ReadableStream<Uint8Array>, limit: number, si
     length += result.value.byteLength;
     if (length > limit) {
         void reader.cancel().catch(() => undefined);
-      throw new Error('Image exceeds cache size limit');
+      throw new InvalidCachedImageError('Image exceeds cache size limit');
     }
     chunks.push(result.value);
   } } catch (error) { void reader.cancel().catch(() => undefined); throw error; }

@@ -1,4 +1,5 @@
 // Destructive fixtures are restricted to a fresh schema in the local test DB.
+import sharp from 'sharp';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
@@ -41,23 +42,45 @@ try {
   const age = () => db.query("UPDATE cache_object_gc SET first_unreferenced_at=now()-interval '8 days'");
   const exists = path => stat(join(root, path)).then(() => true, e => { if (e.code === 'ENOENT') return false; throw e; });
   const cache = new ImageCacheService(repo, store, 1);
-  let data = new Uint8Array([1, 2, 3]);
+  let data = await sharp({create:{width:2,height:2,channels:3,background:'red'}}).png().toBuffer();
+  const oldLength = data.length;
   const load = async () => ({ status: 200, contentType: 'image/png',
     body: new ReadableStream({ start(controller) { controller.enqueue(data); controller.close(); } }) });
   await cache.warm({ sourceId: source, remoteId: 'cover', size: 320, load });
   const old = (await db.query('SELECT * FROM cache_entries')).rows[0];
   await db.query("UPDATE cache_entries SET fetched_at=now()-interval '31 days', next_refresh_at=now()-interval '1 second'");
-  data = new Uint8Array([4, 5, 6, 7]);
+  data = await sharp({create:{width:2,height:2,channels:3,background:'blue'}}).png().toBuffer();
   await cache.warm({ sourceId: source, remoteId: 'cover', size: 320, load });
   await run();
-  assert.equal(reports.at(-1).cacheBytes, 7);
-  assert.equal(await repo.physicalByteLength(), 4);
+  assert.equal(reports.at(-1).cacheBytes, oldLength + data.length);
+  assert.equal(await repo.physicalByteLength(), oldLength + data.length);
   assert.equal(await exists(old.relative_path), true);
-  pass('replacement counts actual bytes; first orphan observation starts a full grace period');
+  assert.ok((await repo.referencedHashes()).has(old.content_hash));
+  await repo.withMaintenance(async locked => {
+    assert.equal(await locked.orphanEligible(old.content_hash,0),false);
+  });
+  const current=(await db.query('SELECT * FROM cache_entries')).rows[0];
+  assert.equal((await repo.evictionCandidates(100)).length,0);
+  await repo.withMaintenance(async locked => {
+    assert.equal(await locked.removeEntry('image',current.cache_key,current.content_hash),false);
+  });
+  await new CacheMaintenanceWorker(repo,store,logger,1).run();
+  assert.equal(await exists(old.relative_path),true);
+  assert.equal(await exists(current.relative_path),true);
+  // Even eviction of a separate entry sharing the backup must not delete it.
+  await repo.withObjectMutation(locked=>locked.put(put({hash:old.content_hash,relativePath:old.relative_path,byteLength:oldLength},'shared-prior')));
+  await repo.withMaintenance(async locked=>assert.equal(await locked.removeEntry('image','shared-prior',old.content_hash),false));
+  assert.equal(await exists(old.relative_path),true);
+  pass('backup references count once and survive GC, quota and shared-object eviction');
+  await db.query("UPDATE cache_entries SET previous_image_expires_at=now()-interval '1 second'");
+  await run();
+  assert.equal(await repo.physicalByteLength(),data.length);
+  assert.equal(await exists(old.relative_path),true);
+  pass('expiry releases previous reference; orphan grace starts after protection ends');
 
   await age(); await run();
   assert.equal(await exists(old.relative_path), false);
-  assert.equal(reports.at(-1).cacheBytes, 4);
+  assert.equal(reports.at(-1).cacheBytes, data.length);
   assert.equal((await db.query('SELECT count(*) FROM cache_object_gc')).rows[0].count, '0');
   pass('expired unreferenced cover is removed even below quota, with tracking cleared');
 

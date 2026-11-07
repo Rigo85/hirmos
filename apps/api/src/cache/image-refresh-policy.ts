@@ -6,6 +6,10 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
 // this deliberately does not attempt to recognize artists or judge aesthetics.
 export const KNOWN_IMAGE_PLACEHOLDERS = new Set([
   'cc10b685f33c5f0b9c3599da834a10dc0c30c164b97032e0fa9ef6266cfa5c72',
+  // Navidrome v0.63.2 resources/{artist,album}-placeholder.webp.
+  // GetOrPlaceholder returns these static bytes regardless of requested size.
+  '521259c652af6d43cb124876106258d93b6b6f7fbe7ad2c73e8345875afe4dcf',
+  '273a4dbd61dfbb0a12d5d8ffe780eb7a3d4d000bc9771c5411cc70ae4dfa8a1f',
 ]);
 
 export function placeholderDelay(attempts: number, random: number): number {
