@@ -229,6 +229,8 @@ export type ArtistGenreTag = z.infer<typeof artistGenreTagSchema>;
 
 export const artistDetailSchema = artistSchema.extend({
   albums: z.array(albumSchema),
+  // Unknown until the source has a complete local catalog. Never sum album sizes.
+  songCount: z.number().int().nonnegative().nullable().optional(),
   genres: z.array(artistGenreTagSchema).default([]),
   biography: z.string().nullable(),
   externalUrl: z.url().nullable(),

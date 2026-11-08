@@ -47,10 +47,10 @@
     <div class="habit-grid">
       @for (album of albums(); track album.id || album.name) {
         @if (album.id) {
-          <a class="habit-detail-card" [routerLink]="['/albums', album.id]">
-            <span class="habit-detail-cover">@if (album.coverUrl) { <img [appLazyCover]="album.coverUrl" [coverSize]="128" [alt]="album.name"> } @else { <b>{{ album.name.slice(0, 2).toUpperCase() }}</b> }</span>
-            <div><strong>{{ album.name }}</strong><small>{{ album.artist }}</small><em>{{ metric(album) }}</em></div>
-          </a>
+          <article class="habit-detail-card">
+            <a class="habit-detail-cover" [routerLink]="['/albums', album.id]" [attr.aria-label]="'Abrir álbum ' + album.name">@if (album.coverUrl) { <img [appLazyCover]="album.coverUrl" [coverSize]="128" [alt]="album.name"> } @else { <b>{{ album.name.slice(0, 2).toUpperCase() }}</b> }</a>
+            <div><strong><a [routerLink]="['/albums', album.id]">{{ album.name }}</a></strong><small>@if (album.artistId) { <a [routerLink]="['/artists', album.artistId]">{{ album.artist }}</a> } @else { {{ album.artist }} }</small><em>{{ metric(album) }}</em></div>
+          </article>
         }
       }
     </div>

@@ -13,6 +13,8 @@ export interface HabitEvidence {
   remoteArtistId: string | null;
   album: string;
   remoteAlbumId: string | null;
+  albumArtist?: string | null;
+  albumArtistId?: string | null;
   durationMs: number;
   coverArtId: string | null;
   artistCoverArtId: string | null;
@@ -141,6 +143,8 @@ export class ActivityRepository {
       remote_artist_id: string | null;
       album_name: string;
       remote_album_id: string | null;
+      album_artist: string | null;
+      album_artist_id: string | null;
       duration_ms: number;
       cover_art_id: string | null;
       artist_cover_art_id: string | null;
@@ -175,7 +179,8 @@ export class ActivityRepository {
        )
        SELECT evidence.source_id, evidence.remote_track_id, track.title,
               track.artist_name, track.remote_artist_id, track.album_name,
-              track.remote_album_id, track.duration_ms, track.cover_art_id,
+              track.remote_album_id, album.artist_name AS album_artist,
+              album.remote_artist_id AS album_artist_id, track.duration_ms, track.cover_art_id,
               artist.cover_art_id AS artist_cover_art_id, track.release_year,
               member.canonical_artist_id,
               canonical.display_name AS canonical_artist_name,
@@ -187,6 +192,8 @@ export class ActivityRepository {
          JOIN catalog_tracks track
            ON track.source_id = evidence.source_id
           AND track.remote_track_id = evidence.remote_track_id
+         LEFT JOIN catalog_albums album
+           ON album.source_id = track.source_id AND album.remote_album_id = track.remote_album_id
          LEFT JOIN catalog_artists artist
            ON artist.source_id = track.source_id
           AND artist.remote_artist_id = track.remote_artist_id
@@ -205,6 +212,8 @@ export class ActivityRepository {
       remoteArtistId: row.remote_artist_id,
       album: row.album_name,
       remoteAlbumId: row.remote_album_id,
+      albumArtist: row.album_artist,
+      albumArtistId: row.album_artist_id,
       durationMs: row.duration_ms,
       coverArtId: row.cover_art_id,
       artistCoverArtId: row.artist_cover_art_id,

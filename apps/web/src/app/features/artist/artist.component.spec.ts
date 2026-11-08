@@ -4,15 +4,17 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import type { ArtistDetail, Track } from '@hirmos/contracts';
-import { of } from 'rxjs';
+import { BehaviorSubject } from 'rxjs';
 import { PlaybackSyncService } from '../../core/playback-sync.service';
 import { ArtistComponent } from './artist.component';
 
 describe('ArtistComponent', () => {
   const selectContext = vi.fn();
+  let route: BehaviorSubject<ReturnType<typeof convertToParamMap>>;
 
   beforeEach(async () => {
     selectContext.mockReset();
+    route = new BehaviorSubject(convertToParamMap({ id: 'artist-id' }));
     await TestBed.configureTestingModule({
       imports: [ArtistComponent],
       providers: [
@@ -21,7 +23,7 @@ describe('ArtistComponent', () => {
         provideRouter([]),
         {
           provide: ActivatedRoute,
-          useValue: { paramMap: of(convertToParamMap({ id: 'artist-id' })) },
+          useValue: { paramMap: route },
         },
         {
           provide: PlaybackSyncService,
@@ -67,6 +69,43 @@ describe('ArtistComponent', () => {
       'artist-id',
     );
   });
+  for (const lateError of [false, true]) {
+    it(`ignores stale artist ${lateError ? 'failure' : 'success'} after navigating`, async () => {
+      const fixture = TestBed.createComponent(ArtistComponent);
+      fixture.detectChanges();
+      const http = TestBed.inject(HttpTestingController);
+      const old = http.expectOne('/api/library/artists/artist-id');
+      route.next(convertToParamMap({ id: 'second' }));
+      http.expectOne('/api/library/artists/second').flush({ ...artistWithPopularTracks(0), id: 'preferred', name: 'Current artist', songCount: 126 });
+      await fixture.whenStable();
+      http.expectOne('/api/library/artists/preferred/genres').flush({ genres: [] });
+      if (lateError) old.flush({}, { status: 503, statusText: 'Unavailable' });
+      else old.flush(artistWithPopularTracks(0));
+      await fixture.whenStable();fixture.detectChanges();
+      expect(fixture.nativeElement.querySelector('h1').textContent).toBe('Current artist');
+      expect(fixture.nativeElement.querySelector('.artist-hero .muted').textContent).toContain('126 canciones');
+      expect(fixture.nativeElement.querySelector('.form-error')).toBeNull();
+      http.verify();
+    });
+  }
+  it('does not invent zero songs before a catalog count is available', async () => {
+    const fixture = TestBed.createComponent(ArtistComponent);fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/library/artists/artist-id').flush(artistWithPopularTracks(0));
+    await fixture.whenStable();
+    http.expectOne('/api/library/artists/artist-id/genres').flush({ genres: [] });
+    await fixture.whenStable();fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.artist-hero .muted').textContent).not.toContain('0 canciones');
+    expect(fixture.nativeElement.textContent).toContain('No hay álbumes atribuidos');
+  });
+  it('ignores a late detail after destroying the view', async () => {
+    const fixture = TestBed.createComponent(ArtistComponent);fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    const pending = http.expectOne('/api/library/artists/artist-id');
+    fixture.destroy();pending.flush(artistWithPopularTracks(0));
+    await fixture.whenStable();http.expectNone('/api/library/artists/artist-id/genres');
+  });
+
 });
 
 function popularTrackButtons(root: HTMLElement): HTMLButtonElement[] {

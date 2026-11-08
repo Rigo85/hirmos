@@ -4,7 +4,9 @@ const { Client } = pg;
 const databaseUrl = required('DATABASE_URL');
 const displayName = required('HIRMOS_CANONICAL_ARTIST_NAME').trim();
 const remoteArtistIds = [...new Set(required('HIRMOS_ARTIST_IDS').split(',').map((id) => id.trim()).filter(Boolean))];
+const preferredId = process.env.HIRMOS_PREFERRED_ARTIST_ID?.trim() || null;
 if (remoteArtistIds.length < 2) throw new Error('At least two HIRMOS_ARTIST_IDS are required');
+if (preferredId && !remoteArtistIds.includes(preferredId)) throw new Error('Preferred artist must be one of HIRMOS_ARTIST_IDS');
 const client = new Client({ connectionString: databaseUrl, application_name: 'hirmos-link-artists' });
 
 await client.connect();
@@ -42,13 +44,13 @@ try {
     [source.rows[0].id, remoteArtistIds],
   );
   const existing = await client.query(
-    `SELECT canonical.id
+    `SELECT DISTINCT canonical.id
        FROM canonical_artists canonical
        JOIN canonical_artist_members member ON member.canonical_artist_id = canonical.id
-      WHERE member.source_id = $1 AND member.remote_artist_id = ANY($2::text[])
-      LIMIT 1`,
+      WHERE member.source_id = $1 AND member.remote_artist_id = ANY($2::text[])`,
     [source.rows[0].id, remoteArtistIds],
   );
+  if (existing.rows.length > 1) throw new Error('Artists already belong to different identities; refusing an implicit merge');
   const canonical = existing.rows[0] ?? (await client.query(
     'INSERT INTO canonical_artists (display_name) VALUES ($1) RETURNING id',
     [displayName],
@@ -67,6 +69,13 @@ try {
        linked_by = 'manual'`,
     [canonical.id, source.rows[0].id, remoteArtistIds],
   );
+  if (preferredId) {
+    await client.query('SELECT id FROM canonical_artists WHERE id=$1 FOR UPDATE', [canonical.id]);
+    await client.query(`UPDATE canonical_artist_members SET preferred_for_navigation=false
+      WHERE canonical_artist_id=$1 AND source_id=$2 AND preferred_for_navigation`, [canonical.id, source.rows[0].id]);
+    await client.query(`UPDATE canonical_artist_members SET preferred_for_navigation=true
+      WHERE canonical_artist_id=$1 AND source_id=$2 AND remote_artist_id=$3`, [canonical.id, source.rows[0].id, preferredId]);
+  }
   await client.query('COMMIT');
   process.stdout.write(JSON.stringify({ status: 'linked', canonicalArtistId: canonical.id, members: remoteArtistIds.length }) + '\n');
 } catch (error) {

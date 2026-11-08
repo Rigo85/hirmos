@@ -113,6 +113,7 @@ const imageLabPictures = imageLab ? [
 if (imageLab) artist.coverArt = 'fixture-cover';
 const albums=[album];
 const artists=[artist];
+const artistNavigationLab = process.argv.includes('--artist-navigation');
 const localCovers=new Map();
 // Optional private metadata/artwork snapshot. No URLs, credentials or audio are
 // imported; every provider request still goes to this loopback fixture.
@@ -147,6 +148,24 @@ if(catalogFile){
     }
   }
   for(const a of artists)a.albumCount=albums.filter(item=>item.artistId===a.id).length;
+}
+// Preserve guest identities from the private snapshot; an unknown artist must
+// never silently become the fixture's unrelated default artist.
+for (const song of songs) {
+  if (song.artistId && !artists.some(a => a.id === song.artistId)) {
+    artists.push({ id: song.artistId, name: song.artist, albumCount: 0 });
+  }
+}
+// Reproduce a track artist omitted by the provider's album-artist index.
+const navigationPrimary = artists.find(a => a.id !== 'artist') ?? artist;
+const navigationAlias = artistNavigationLab
+  ? { id: `${navigationPrimary.id}-alias`, name: `${navigationPrimary.name} (alias de prueba)`, albumCount: 0 }
+  : null;
+if (navigationAlias) {
+  artists.push(navigationAlias);
+  songs.filter(song => song.artistId === navigationPrimary.id).forEach((song, index) => {
+    if (index % 2 === 0) { song.artistId = navigationAlias.id; song.artist = navigationAlias.name; }
+  });
 }
 const wav = Buffer.alloc(44 + 180 * 16000 * 2);
 wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
@@ -204,7 +223,7 @@ const provider = createServer(async (req, res) => {
   }
   const data = {
     ping: {}, getOpenSubsonicExtensions: { openSubsonicExtensions: [] },
-    getArtists: { artists: { index: [{ artist: artists }] } },
+    getArtists: { artists: { index: [{ artist: artists.filter(a => a.id !== navigationAlias?.id) }] } },
     getAlbumList2: { albumList2: { album: albums.slice(Number(target.searchParams.get('offset')||0),Number(target.searchParams.get('offset')||0)+Number(target.searchParams.get('size')||500)) } },
     getAlbum: { album: { ...(albums.find(a=>a.id===id)??album), song: songs.filter(t=>t.albumId===(id??album.id)) } },
     getArtist: { artist: { ...(artists.find(a=>a.id===id)??artist), album: albums.filter(a=>a.artistId===(id??artist.id)) } },
@@ -233,6 +252,20 @@ const music = new MusicSourceService(new MusicSourceRepository(database),
   new FavoriteRepository(database), imageLabCache);
 await music.configure({ name: 'Fuente sintética', baseUrl: 'http://127.0.0.1:3314', username: 'fixture', password: 'fixture' });
 await music.syncCatalog();
+if (navigationAlias) {
+  const source = await new MusicSourceRepository(database).current();
+  const existing = await database.query(`SELECT canonical_artist_id AS id FROM canonical_artist_members
+    WHERE source_id=$1 AND remote_artist_id=$2`, [source.id, navigationPrimary.id]);
+  const identity = existing.rows[0] ?? (await database.query(
+    'INSERT INTO canonical_artists(display_name) VALUES ($1) RETURNING id', [navigationPrimary.name])).rows[0];
+  await database.query(`INSERT INTO canonical_artist_members
+    (canonical_artist_id,source_id,remote_artist_id,linked_by,preferred_for_navigation)
+    VALUES ($1,$2,$3,'manual',true),($1,$2,$4,'manual',false)
+    ON CONFLICT (source_id,remote_artist_id) DO UPDATE SET
+      canonical_artist_id=EXCLUDED.canonical_artist_id,
+      preferred_for_navigation=EXCLUDED.preferred_for_navigation`,
+    [identity.id, source.id, navigationPrimary.id, navigationAlias.id]);
+}
 if (trackLayoutLab) {
   const originalHome=music.home.bind(music);
   music.home=async userId=>{

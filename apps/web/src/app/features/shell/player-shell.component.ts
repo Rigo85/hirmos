@@ -109,6 +109,18 @@ export class PlayerShellComponent {
     if (shouldPopHistory) view?.history.back();
   }
 
+  protected closeForEntityNavigation(event: MouseEvent, commands: string[]): void {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const destination = this.router.serializeUrl(this.router.createUrlTree(commands));
+    if (destination === this.router.url) {
+      this.closeMobilePlayer();
+    } else {
+      // RouterLink replaces the modal's history entry. Going back here would
+      // race that navigation and undo the destination the user just selected.
+      this.finishClosingMobilePlayer();
+    }
+  }
+
   @HostListener('window:popstate')
   protected handleBrowserBack(): void {
     if (this.mobilePlayerOpen()) this.finishClosingMobilePlayer();

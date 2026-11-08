@@ -288,6 +288,9 @@ img.mini-cover { width:48px; height:48px; object-fit:cover; }
 .play-album-button { display:inline-flex; align-items:center; justify-content:center; gap:9px; }.play-album-button app-icon { width:17px; height:17px; }
 .detail-tracks { margin-top:24px; }.track-leading { display:grid; grid-template-columns:18px 24px; align-items:center; justify-content:center; gap:5px; color:var(--muted); text-align:center; }.track-leading > span { font-size:12px; }.track-leading app-icon { width:20px; height:20px; color:var(--accent-bright); opacity:.78; transition:opacity .15s, transform .15s; }.track-row:hover .track-leading app-icon,.track-row--current .track-leading app-icon { opacity:1; transform:scale(1.08); }.track-row--current .track-leading > span { color:var(--accent-bright); font-weight:700; }
 .artist-hero { display:flex; align-items:center; gap:30px; padding:20px 0 34px; border-bottom:1px solid var(--line); }.artist-hero > img, .artist-hero > span { display:grid; width:180px; height:180px; place-items:center; border-radius:50%; object-fit:cover; background:linear-gradient(145deg,#3e4652,#15181e); color:var(--accent); font-size:34px; font-weight:700; }
+.artist-hero > div { min-width:0; }
+.artist-hero > img, .artist-hero > span { flex-shrink:0; }
+.artist-hero h1 { overflow-wrap:anywhere; }
 .artist-overview { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr); gap:clamp(28px,4vw,60px); margin-top:40px; padding-bottom:6px; }.artist-overview--single { grid-template-columns:minmax(0,760px); }.artist-top-tracks { max-height:306px; margin-top:14px; padding-right:5px; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }.artist-top-tracks .track-row { min-height:58px; padding-top:5px; padding-bottom:5px; }.popular-tracks-count { padding-bottom:2px; color:var(--muted); font-size:12px; }.artist-biography { align-self:start; padding:22px; border:1px solid var(--line); border-radius:14px; background:rgba(255,255,255,.018); }.artist-biography h2 { margin:0; font-size:23px; letter-spacing:-.025em; }.artist-biography > p:not(.eyebrow) { display:-webkit-box; margin:14px 0 0; overflow:hidden; color:#b0b4bc; font-size:13px; line-height:1.7; -webkit-box-orient:vertical; -webkit-line-clamp:8; }.artist-biography a { display:inline-flex; gap:5px; margin-top:17px; color:var(--accent-bright); font-size:12px; font-weight:650; }.artist-biography a:hover { text-decoration:underline; }.artist-grid--related { grid-template-columns:repeat(8,minmax(0,1fr)); margin-top:22px; }
 .activity-page__header { padding:20px 0 30px; border-bottom:1px solid var(--line); }.activity-page__header h1 { margin:4px 0 8px; font-size:clamp(34px,4vw,52px); letter-spacing:-.04em; }.activity-page__header .muted { margin:0; font-size:13px; }.activity-results { margin-top:24px; }.load-more { display:flex; justify-content:center; padding:28px 0 10px; }.load-more .outline-button { min-width:150px; }
 .genre-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:20px; }.genre-actions .play-album-button { margin:0; }
@@ -404,6 +407,13 @@ img.mini-cover { width:48px; height:48px; object-fit:cover; }
   .form-columns { grid-template-columns:1fr; gap:0; }.form-actions { flex-direction:column-reverse; }.form-actions button { width:100%; }
   .catalog-sync-card__body { align-items:stretch; flex-direction:column; }.catalog-sync-card__body button { width:100%; }
   .invite-form__row { grid-template-columns:1fr; gap:16px; }.invite-form__submit { width:100%; margin-top:2px; }
+  /* Only metadata links sit above the expand button; cover/title still expand. */
+  .player-track { z-index:4; pointer-events:none; }
+  .player-track .entity-links a { pointer-events:auto; position:relative; padding-block:5px; margin-block:-5px; }
+  .now-playing-entity-links { display:grid; min-width:0; white-space:normal; }
+  .now-playing-entity-links > span[aria-hidden] { display:none; }
+  .now-playing-entity-links a { display:block; min-width:0; min-height:44px; padding-block:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-decoration:underline; text-underline-offset:3px; }
+  .artist-hero { gap:16px; }
   .artist-grid,.artist-grid--compact { grid-template-columns:repeat(3,minmax(0,1fr)); gap:17px; }.genre-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.detail-hero { grid-template-columns:110px 1fr; gap:18px; }.detail-cover { width:110px; }.detail-hero h1 { font-size:32px; }.artist-hero > img,.artist-hero > span { width:110px; height:110px; }.artist-hero h1 { font-size:38px; }
   .artist-overview { margin-top:30px; gap:30px; }.artist-biography { padding:18px; }.artist-grid--related { grid-template-columns:repeat(3,minmax(0,1fr)); }
   .habit-carousel { grid-auto-columns:minmax(225px,78vw); }.habits-controls { display:block; }.period-switch { width:max-content; max-width:100%; margin-top:14px; overflow-x:auto; }.habit-grid { grid-template-columns:1fr; }
@@ -418,3 +428,11 @@ img.mini-cover { width:48px; height:48px; object-fit:cover; }
   .mobile-now-playing__actions { margin-top:10px; }
 }
 .player-feedback.player-information { color:#eee9df; background:rgba(28,32,37,.97); border-color:rgba(255,255,255,.2); }
+
+@media (max-width:400px) {
+  .artist-hero { flex-direction:column; align-items:flex-start; }
+  .artist-hero > div { width:100%; }
+}
+
+/* A discography must not hide its last album at the tablet breakpoint. */
+.artist-discography.album-grid--five .album-card:last-child { display:grid; }

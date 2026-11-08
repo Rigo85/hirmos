@@ -12,6 +12,42 @@ export interface CatalogSearchResult {
 export class CatalogRepository {
   public constructor(private readonly db: Database) {}
 
+  public async artistIdentity(sourceId: string, remoteArtistId: string): Promise<{
+    preferredId: string; memberIds: string[];
+  }> {
+    const result = await this.db.query<{ remote_artist_id: string; preferred_for_navigation: boolean }>(
+      `SELECT sibling.remote_artist_id, sibling.preferred_for_navigation
+         FROM canonical_artist_members member
+         JOIN canonical_artist_members sibling
+           ON sibling.canonical_artist_id = member.canonical_artist_id
+          AND sibling.source_id = member.source_id
+        WHERE member.source_id = $1 AND member.remote_artist_id = $2
+        ORDER BY sibling.remote_artist_id`, [sourceId, remoteArtistId],
+    );
+    return {
+      preferredId: result.rows.find(row => row.preferred_for_navigation)?.remote_artist_id ?? remoteArtistId,
+      memberIds: result.rows.length ? result.rows.map(row => row.remote_artist_id) : [remoteArtistId],
+    };
+  }
+
+  public async artistLibrary(sourceId: string, memberIds: string[]): Promise<{
+    albums: SourceAlbum[]; songCount: number;
+  } | null> {
+    if (!await this.isReady(sourceId)) return null;
+    const [albums, tracks] = await Promise.all([
+      this.db.query<AlbumRow>(
+        `SELECT * FROM catalog_albums
+          WHERE source_id = $1 AND remote_artist_id = ANY($2::text[])
+            AND missing_since IS NULL
+          ORDER BY release_year NULLS LAST, lower(name), remote_album_id`, [sourceId, memberIds]),
+      this.db.query<{ count: string }>(
+        `SELECT count(*) FROM catalog_tracks
+          WHERE source_id = $1 AND remote_artist_id = ANY($2::text[])
+            AND missing_since IS NULL`, [sourceId, memberIds]),
+    ]);
+    return { albums: albums.rows.map(mapAlbumRow), songCount: Number(tracks.rows[0]?.count ?? 0) };
+  }
+
   public async observeTracks(sourceId: string, tracks: SourceTrack[]): Promise<string[]> {
     if (!tracks.length) return [];
     const result = await this.db.query<{ remote_artist_id: string }>(
@@ -476,6 +512,30 @@ export class CatalogRepository {
     albums: number;
     tracks: number;
   }): Promise<string[]> {
+    // Track artists need not occur in the provider's album-artist index. Only
+    // references observed during this successful scan count as fresh evidence.
+    if (this.db.transaction) {
+      return this.db.transaction(tx => new CatalogRepository({
+        query: tx.query, close: async () => {},
+      }).finishSync(input));
+    }
+    await this.db.query(
+      `INSERT INTO catalog_artists (source_id, remote_artist_id, name, album_count, last_seen_at)
+       SELECT $1, remote_artist_id, name, 0, last_seen_at FROM (
+         SELECT DISTINCT ON (remote_artist_id) remote_artist_id, name, last_seen_at
+           FROM (
+             SELECT remote_artist_id, artist_name AS name, last_seen_at FROM catalog_tracks
+              WHERE source_id = $1 AND last_seen_at >= $2 AND missing_since IS NULL
+             UNION ALL
+             SELECT remote_artist_id, artist_name AS name, last_seen_at FROM catalog_albums
+              WHERE source_id = $1 AND last_seen_at >= $2 AND missing_since IS NULL
+           ) refs WHERE remote_artist_id IS NOT NULL
+           ORDER BY remote_artist_id, last_seen_at DESC, name
+       ) observed
+       ON CONFLICT (source_id, remote_artist_id) DO UPDATE SET
+         last_seen_at = GREATEST(catalog_artists.last_seen_at, EXCLUDED.last_seen_at),
+         missing_since = NULL, missing_syncs = 0`, [input.sourceId, input.startedAt],
+    );
     const result = await this.db.query<{ remote_artist_id: string }>(
       `WITH newly_missing_tracks AS MATERIALIZED (
          SELECT remote_artist_id

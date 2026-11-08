@@ -55,7 +55,8 @@
     "audio-lab": "vite --config tools/audio-eq-lab/vite.config.ts",
     "audio-lab:build": "vite build --config tools/audio-eq-lab/vite.config.ts",
     "audio-lab:test": "vitest run --config tools/audio-eq-lab/vitest.config.ts",
-    "audio-lab:typecheck": "tsc --noEmit -p tools/audio-eq-lab/tsconfig.json"
+    "audio-lab:typecheck": "tsc --noEmit -p tools/audio-eq-lab/tsconfig.json",
+    "test:artists:pg": "node scripts/test-artist-navigation.mjs"
   },
   "allowScripts": {
     "@parcel/watcher@2.6.0": true,

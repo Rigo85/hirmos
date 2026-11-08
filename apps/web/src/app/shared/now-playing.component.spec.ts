@@ -25,3 +25,12 @@ it('closes for downward swipe, not a horizontal gesture',()=>{
   pointer('pointerdown',10,10);pointer('pointerup',200,30);expect(closed).not.toHaveBeenCalled();
   pointer('pointerdown',10,10);pointer('pointerup',15,100);expect(closed).toHaveBeenCalledOnce();
 });
+it('keeps offline metadata as text when no online navigation is projected',()=>{
+  const {root,fixture}=setup();
+  fixture.componentRef.setInput('artist','Local artist');
+  fixture.componentRef.setInput('album','Local album');fixture.detectChanges();
+  const metadata=root.querySelector('.mobile-now-playing__metadata')!;
+  expect(metadata.textContent).toContain('Local artist');
+  expect(metadata.textContent).toContain('Local album');
+  expect(metadata.querySelector('a')).toBeNull();
+});

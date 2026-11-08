@@ -356,7 +356,9 @@ export class MusicSourceService {
   }
 
   public async artist(userId: string, reference: string): Promise<ArtistDetail> {
-    const { source, remoteId } = await this.resolveReference(reference);
+    const { source, remoteId: requestedId } = await this.resolveReference(reference);
+    const identity = await this.catalog?.artistIdentity(source.id, requestedId);
+    const remoteId = identity?.preferredId ?? requestedId;
     const cached = await this.catalog?.artistDetail(source.id, remoteId).catch(() => null) ?? null;
     const artist = cached?.detail
       ?? await this.fetchAndCacheArtistDetail(source, remoteId);
@@ -370,10 +372,14 @@ export class MusicSourceService {
       .catch(() => null) ?? null;
     const topTracks = cachedTopTrackIds === null
       ? artist.topTracks
-      : await this.catalog?.tracksByIds(source.id, cachedTopTrackIds).catch(() => []) ?? [];
+      : await this.catalog?.tracksByIds(source.id, cachedTopTrackIds).catch(() => null) ?? artist.topTracks;
+    const library = await this.catalog?.artistLibrary(source.id, identity?.memberIds ?? [remoteId]);
+    const albums = library?.albums ?? artist.albums;
     return {
       ...publicArtist(source.id, artist),
-      albums: artist.albums.map((album) => publicAlbum(source.id, album)),
+      albumCount: albums.length,
+      songCount: library?.songCount ?? null,
+      albums: albums.map((album) => publicAlbum(source.id, album)),
       genres: localGenres,
       biography: artist.biography,
       externalUrl: artist.externalUrl,
@@ -407,7 +413,8 @@ export class MusicSourceService {
   }
 
   public async artistGenreTags(reference: string) {
-    const { source, remoteId } = await this.resolveReference(reference);
+    const { source, remoteId: requestedId } = await this.resolveReference(reference);
+    const remoteId = (await this.catalog?.artistIdentity(source.id, requestedId))?.preferredId ?? requestedId;
     const key = `${source.id}:${remoteId}`;
     let lookup = this.artistTagLookups.get(key);
     let localGenres: Array<{ name: string; browsable: boolean; reference: string | null }> = [];
@@ -897,9 +904,9 @@ function aggregateAlbums(evidence: HabitEvidence[]): HabitAlbum[] {
       ? encodeTrackReference(group.evidence.sourceId, group.evidence.remoteAlbumId)
       : '',
     name: group.evidence.album,
-    artist: group.evidence.canonicalArtistName ?? group.evidence.artist,
-    artistId: group.evidence.remoteArtistId
-      ? encodeTrackReference(group.evidence.sourceId, group.evidence.remoteArtistId) : null,
+    artist: group.evidence.albumArtist ?? group.evidence.artist,
+    artistId: group.evidence.albumArtistId
+      ? encodeTrackReference(group.evidence.sourceId, group.evidence.albumArtistId) : null,
     coverUrl: publicCoverUrl(group.evidence.sourceId, group.evidence.coverArtId),
     songCount: group.trackIds.size,
     durationMs: 0,

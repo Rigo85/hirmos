@@ -16,7 +16,7 @@ export class ArtistComponent {
   protected readonly playback = inject(PlaybackSyncService);
   protected readonly artist = signal<ArtistDetail | null>(null);
   protected readonly songCount = computed(() =>
-    this.artist()?.albums.reduce((total, album) => total + album.songCount, 0) ?? 0,
+    this.artist()?.songCount ?? null,
   );
   protected readonly error = signal<string | null>(null);
   private loadVersion = 0;
@@ -39,10 +39,14 @@ export class ArtistComponent {
     const version = ++this.loadVersion;
     this.artist.set(null); this.error.set(null);
     try {
-      this.artist.set(await firstValueFrom(this.http.get<ArtistDetail>(`/api/library/artists/${encodeURIComponent(id)}`)));
-      void this.loadGenres(id, version);
+      const artist = await firstValueFrom(this.http.get<ArtistDetail>(`/api/library/artists/${encodeURIComponent(id)}`));
+      if (this.destroyRef.destroyed || version !== this.loadVersion) return;
+      this.artist.set(artist);
+      void this.loadGenres(artist.id, version);
     }
-    catch { this.error.set('No pudimos abrir este artista.'); }
+    catch {
+      if (!this.destroyRef.destroyed && version === this.loadVersion) this.error.set('No pudimos abrir este artista.');
+    }
   }
 
   private async loadGenres(id: string, version: number): Promise<void> {
@@ -51,7 +55,7 @@ export class ArtistComponent {
         `/api/library/artists/${encodeURIComponent(id)}/genres`,
       ));
       const current = this.artist();
-      if (current && version === this.loadVersion) {
+      if (current && !this.destroyRef.destroyed && version === this.loadVersion) {
         this.artist.set({ ...current, genres: response.genres });
       }
     } catch {

@@ -12,7 +12,7 @@
       @if (coverUrl()) { <img [src]="coverUrl()" alt=""> } @else { <span>{{ title().slice(0, 2).toUpperCase() }}</span> }
     </div>
     <div class="mobile-now-playing__metadata">
-      <div><h2 id="mobile-now-playing-title">{{ title() }}</h2><p>{{ artist() }}@if (album()) { <span aria-hidden="true"> · </span>{{ album() }} }</p></div>
+      <div><h2 id="mobile-now-playing-title">{{ title() }}</h2><p><ng-content select="[nowPlayingMetadata]">{{ artist() }}@if (album()) { <span aria-hidden="true"> · </span>{{ album() }} }</ng-content></p></div>
       <ng-content select="[playerFavorite]" />
     </div>
     <div class="mobile-now-playing__progress">

@@ -622,6 +622,28 @@ Los alias confirmados de un artista pueden agruparse sin alterar los metadatos
 del servidor original mediante `npm run catalog:link-artists`. No se realiza
 unión automática sólo por semejanza textual.
 
+Las fichas reúnen los álbumes de esas identidades confirmadas dentro de la misma
+fuente. El contador de canciones usa pistas activas únicas, no la suma del tamaño
+de los álbumes: participar en un recopilatorio no lo convierte en discografía
+propia. Antes de completar el catálogo local, el contador se omite.
+
+Para elegir explícitamente la variante cuya foto, biografía y populares se
+presentan al abrir cualquiera de sus alias, aplicar la migración `0025` y usar:
+
+```sh
+HIRMOS_SOURCE_ID="$SOURCE_ID" \
+HIRMOS_CANONICAL_ARTIST_NAME='Example Artist' \
+HIRMOS_ARTIST_IDS='artist-main,artist-alias' \
+HIRMOS_PREFERRED_ARTIST_ID='artist-main' \
+npm run catalog:link-artists
+```
+
+Requiere `DATABASE_URL` y `SOURCE_ID` en el entorno. La preferencia debe pertenecer al grupo;
+no se cambia por popularidad ni se fusionan grupos ya distintos. Sin preferencia,
+se conserva la variante solicitada para los metadatos externos. No se modifican
+los IDs de canciones, colas ni descargas. `npm run test:artists:pg` verifica estos
+casos en un esquema temporal de la base local de pruebas.
+
 MusicBrainz es una fuente opcional de identificadores públicos: consultar su
 API no exige una cuenta y Hirmos no depende de ella para calcular hábitos. Las
 uniones dudosas siempre requieren confirmación explícita.
